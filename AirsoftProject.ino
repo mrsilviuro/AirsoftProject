@@ -1,8 +1,8 @@
 #include "buttons.h"
 #include "config.h"
 #include "display.h"
-#include "rfid.h"
 #include "lora.h"
+#include "rfid.h"
 
 // ============================================================
 // Starea masinii de stari
@@ -12,11 +12,12 @@ bool needsDisplayUpdate = true;
 
 // --- Display brightness ---
 uint32_t lastActivityTime = 0;
-bool     isDimmed         = false;
+bool isDimmed = false;
 
 // --- Meniu ---
 uint8_t menuIndex = 0;
 int8_t selectedMode = -1;
+uint32_t loadingStartTime = 0;
 
 // --- Pagini ---
 uint8_t currentPage = 0;
@@ -45,16 +46,16 @@ uint8_t batteryPercent = 100;
 bool isBombArmed = false;
 Team bombOwner = TEAM_NEUTRAL;  // Echipa care a amorsat
 uint32_t bombPlantTime = 0;
-uint32_t bombTimerMs  = 15 * 60000UL;  // index 2 = 15 minute
+uint32_t bombTimerMs = 15 * 60000UL;  // index 2 = 15 minute
 bool isCooldownActive = false;
 uint32_t cooldownStartTime = 0;
-uint32_t cooldownMs   = 20 * 60000UL;  // index 3 = 20 minute
+uint32_t cooldownMs = 20 * 60000UL;  // index 3 = 20 minute
 uint32_t bombPointsExplode = 600;
 uint32_t bombPointsDefuse = 300;
 
 // --- Respawn ---
 Team respawnTeam = TEAM_NEUTRAL;
-uint32_t respawnTimeMs        = 300000;  // 5 minute
+uint32_t respawnTimeMs = 300000;  // 5 minute
 uint16_t respawnPenaltyPoints = 25;
 uint16_t teamKills[4] = {0, 0, 0, 0};
 uint16_t teamMaxRespawns[4] = {0, 0, 0, 0};  // 0 = nelimitat
@@ -89,6 +90,7 @@ uint8_t adminSelectedPage = 0;
 uint32_t adminSavedTime = 0;
 GameState previousStateBeforeAdmin = STATE_MENU;
 static uint32_t lastRfidRead = 0;
+uint32_t syncingStartTime = 0;
 
 // Indecsi setari
 uint8_t gsIndex = 0, gsWinCond = 0, gsTimeLimit = 0, gsBonus = 2;
@@ -131,18 +133,23 @@ AdminContext buildAdminContext() {
 void updateBattery() {
     uint32_t sum = 0;
     for (uint8_t i = 0; i < 20; i++) sum += analogRead(PIN_BATTERY);
-    float adcAvg  = sum / 20.0;
-    float pinV    = (adcAvg / 4095.0) * 3.56;
-    float batV    = pinV * ((10.0 + 3.3) / 3.3); // Divizor 10k/3.3k
+    float adcAvg = sum / 20.0;
+    float pinV = (adcAvg / 4095.0) * 3.56;
+    float batV = pinV * ((10.0 + 3.3) / 3.3);  // Divizor 10k/3.3k
 
     uint8_t newPercent = 0;
-    if      (batV >= 12.6) newPercent = 100;
-    else if (batV <= 9.0)  newPercent = 0;
-    else newPercent = (uint8_t)(((batV - 9.0) / (12.6 - 9.0)) * 100.0);
+    if (batV >= 12.6)
+        newPercent = 100;
+    else if (batV <= 9.0)
+        newPercent = 0;
+    else
+        newPercent = (uint8_t)(((batV - 9.0) / (12.6 - 9.0)) * 100.0);
 
     // Smoothing — evitam salturi bruste
-    if (batteryPercent == 100) batteryPercent = newPercent;
-    else batteryPercent = (batteryPercent * 80 + newPercent * 20) / 100;
+    if (batteryPercent == 100)
+        batteryPercent = newPercent;
+    else
+        batteryPercent = (batteryPercent * 80 + newPercent * 20) / 100;
 }
 
 // ============================================================
@@ -206,7 +213,6 @@ void handleActionProgress() {
             Serial.print("[SECTOR] Cucerit de: ");
             Serial.println(TEAM_NAMES[actingTeam]);
             loraSendUrgent(EVT_SECTOR_CAPTURED, (uint8_t)sectorOwner);
-            loraPrintTiming("URGENT CAPTURE");
         } else if (currentAction == ACT_NEUTRALIZE) {
             sectorOwner = TEAM_NEUTRAL;
             captureStartTime = 0;
@@ -215,7 +221,6 @@ void handleActionProgress() {
             Serial.print("[SECTOR] Neutralizat de: ");
             Serial.println(TEAM_NAMES[actingTeam]);
             loraSendUrgent(EVT_SECTOR_NEUTRAL, 0);
-            loraPrintTiming("URGENT NEUTRAL");
         } else if (currentAction == ACT_ARM) {
             isBombArmed = true;
             bombOwner = (Team)(actingTeam + 1);
@@ -224,7 +229,6 @@ void handleActionProgress() {
             Serial.print("[BOMB] Amorsata de: ");
             Serial.println(TEAM_NAMES[actingTeam]);
             loraSendUrgent(EVT_BOMB_ARMED, (uint8_t)bombOwner);
-            loraPrintTiming("URGENT BOMB ARM");
         } else if (currentAction == ACT_DEFUSE) {
             isBombArmed = false;
             isCooldownActive = true;
@@ -234,7 +238,6 @@ void handleActionProgress() {
             Serial.print("[BOMB] Dezamorsata de: ");
             Serial.println(TEAM_NAMES[actingTeam]);
             loraSendUrgent(EVT_BOMB_DEFUSED, (uint8_t)(actingTeam + 1));
-            loraPrintTiming("URGENT DEFUSE");
         }
 
         // Releu 3 secunde (beep/sirena scurta)
@@ -293,8 +296,7 @@ void buildContext() {
     memcpy(ctx.teamKills, teamKills, sizeof(teamKills));
 
     // Scoruri (placeholder)
-    for (uint8_t i = 0; i < 4; i++)
-        ctx.liveScore[i] = loraGetNetworkScore(i, liveScore[i]);
+    for (uint8_t i = 0; i < 4; i++) ctx.liveScore[i] = loraGetNetworkScore(i, liveScore[i]);
     memset(ctx.bankedKills, 0, sizeof(ctx.bankedKills));
     memset(ctx.globalKills, 0, sizeof(ctx.globalKills));
     ctx.globalKills[UNIT_ID - 1][0] = teamKills[0];
@@ -318,11 +320,8 @@ void buildContext() {
         ctx.globalUnitStatus[UNIT_ID - 1] = sectorOwner;
         ctx.globalEventTime[UNIT_ID - 1] = captureStartTime;
     } else if (myMode == 2) {
-        ctx.globalUnitStatus[UNIT_ID - 1] =
-        isBombArmed ? TEAM_PLANTED : TEAM_NEUTRAL;
-        ctx.globalEventTime[UNIT_ID - 1] = isBombArmed        ? bombPlantTime
-        : isCooldownActive ? cooldownStartTime
-        : 0;
+        ctx.globalUnitStatus[UNIT_ID - 1] = isBombArmed ? TEAM_PLANTED : TEAM_NEUTRAL;
+        ctx.globalEventTime[UNIT_ID - 1] = isBombArmed ? bombPlantTime : isCooldownActive ? cooldownStartTime : 0;
     } else if (myMode == 3) {
         ctx.globalUnitStatus[UNIT_ID - 1] = respawnTeam;
         ctx.globalEventTime[UNIT_ID - 1] = 0;
@@ -331,11 +330,11 @@ void buildContext() {
     // Restul unitatilor — golim (LoRa va popula mai tarziu)
     for (uint8_t i = 0; i < MAX_UNITS; i++) {
         if (i == UNIT_ID - 1) continue;
-        ctx.globalUnitMode[i]   = globalUnitMode[i];
+        ctx.globalUnitMode[i] = globalUnitMode[i];
         ctx.globalUnitStatus[i] = globalUnitStatus[i];
-        ctx.lastSeenTime[i]     = lastSeenTime[i];
-        ctx.globalEventTime[i]  = globalEventTime[i];
-        ctx.globalBattery[i]    = globalBattery[i];
+        ctx.lastSeenTime[i] = lastSeenTime[i];
+        ctx.globalEventTime[i] = globalEventTime[i];
+        ctx.globalBattery[i] = globalBattery[i];
     }
 
     ctx.page4ScrollIndex = 0;
@@ -351,45 +350,57 @@ void resetActivity() {
     lastActivityTime = millis();
     if (isDimmed) {
         isDimmed = false;
-        setBrightness(204); // 80%
+        setBrightness(204);  // 80%
     }
 }
 
 void loraPrintTiming(const char* label) {
     uint32_t now = millis();
 
-    uint32_t cycleS  = 0;
+    uint32_t cycleS = 0;
     uint32_t cycleMs = 0;
 
     if (isNetworkSynced && now >= lastEpochTick) {
         uint32_t msInCycle = (syncEpochSeconds * 1000) + (now - lastEpochTick);
-        cycleS  = (msInCycle / 1000) % 60;
+        cycleS = (msInCycle / 1000) % 60;
         cycleMs = msInCycle % 1000;
     } else if (isNetworkSynced) {
         // Inca in fereastra de 15s de asteptare dupa sync
-        cycleS  = 0;
+        cycleS = 0;
         cycleMs = 0;
     }
 
     uint32_t elapsed = now - syncReceivedTime;
-    uint32_t elH  = elapsed / 3600000;
-    uint32_t elM  = (elapsed % 3600000) / 60000;
-    uint32_t elS  = (elapsed % 60000) / 1000;
+    uint32_t elH = elapsed / 3600000;
+    uint32_t elM = (elapsed % 3600000) / 60000;
+    uint32_t elS = (elapsed % 60000) / 1000;
     uint32_t elMs = elapsed % 1000;
 
-    Serial.print("["); Serial.print(label); Serial.print("] ");
+    Serial.print("[");
+    Serial.print(label);
+    Serial.print("] ");
     if (isNetworkSynced && now < lastEpochTick) {
-        Serial.print("Epoch: waiting 15s...");
+        Serial.print("Epoch: waiting 5s...");
     } else {
         Serial.print("Epoch: ");
-        Serial.print(cycleS); Serial.print("s ");
-        Serial.print(cycleMs); Serial.print("ms");
+        Serial.print(cycleS);
+        Serial.print("s ");
+        Serial.print(cycleMs);
+        Serial.print("ms");
     }
     Serial.print(" / From Sync: ");
-    if (elH > 0) { Serial.print(elH); Serial.print("h "); }
-    if (elM > 0 || elH > 0) { Serial.print(elM); Serial.print("m "); }
-    Serial.print(elS); Serial.print("s ");
-    Serial.print(elMs); Serial.println("ms");
+    if (elH > 0) {
+        Serial.print(elH);
+        Serial.print("h ");
+    }
+    if (elM > 0 || elH > 0) {
+        Serial.print(elM);
+        Serial.print("m ");
+    }
+    Serial.print(elS);
+    Serial.print("s ");
+    Serial.print(elMs);
+    Serial.println("ms");
 }
 
 // ============================================================
@@ -421,21 +432,20 @@ void setup() {
 void loop() {
     uint32_t now = millis();
     // LoRa update — receptie + TDMA + transmisii programate
-    loraUpdate(liveScore, teamKills, selectedMode,
-               sectorOwner, isBombArmed, respawnTeam,
-               batteryPercent, isTimeOut,
-               isGameTimerRunning, gameTimeLeftSeconds);
+    loraUpdate(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
 
     // Restart global primit prin LoRa
     if (loraRestartPending()) {
         display.clearDisplay();
         display.setTextSize(2);
         uint8_t rx = (SCREEN_WIDTH - (strlen("REBOOTING") * 12)) / 2;
-        display.setCursor(rx, 24); display.print("REBOOTING");
+        display.setCursor(rx, 24);
+        display.print("REBOOTING");
         display.display();
         tone(PIN_BUZZER, 2000, 800);
         unsigned long t = millis();
-        while (millis() - t < 1000) {} // Singura exceptie acceptata — inainte de restart
+        while (millis() - t < 1000) {
+        }  // Singura exceptie acceptata — inainte de restart
         ESP.restart();
     }
     static bool isBombBeeping = false;
@@ -475,19 +485,19 @@ void loop() {
     // Auto-dim display
     if (!isDimmed && (now - lastActivityTime >= 15000)) {
         isDimmed = true;
-        setBrightness(10); // ~10%
+        setBrightness(10);  // ~10%
     }
 
     // Generare puncte sector (la 10 secunde)
     if (!isTimeOut && selectedMode == 0 && sectorOwner != TEAM_NEUTRAL) {
         if (now - lastPointTick >= 10000) {
             uint32_t minutesHeld = (now - captureStartTime) / 60000;
-            uint32_t bonus  = (bonusIntervalMinutes > 0) ? (minutesHeld / bonusIntervalMinutes) : 0;
+            uint32_t bonus = (bonusIntervalMinutes > 0) ? (minutesHeld / bonusIntervalMinutes) : 0;
             uint32_t points = 3 + bonus;
 
-            liveScore[sectorOwner - 1]  += points;
-            currentCapturePoints        += points;
-            lastPointTick               += 10000;  // ← adaugam, nu resetam!
+            liveScore[sectorOwner - 1] += points;
+            currentCapturePoints += points;
+            lastPointTick += 10000;  // ← adaugam, nu resetam!
         }
     }
 
@@ -498,12 +508,12 @@ void loop() {
 
         if (elapsed >= bombTimerMs) {
             // EXPLOZIE!
-            isBombArmed       = false;
-            isCooldownActive  = true;
+            isBombArmed = false;
+            isCooldownActive = true;
             cooldownStartTime = now;
             liveScore[bombOwner - 1] += bombPointsExplode;
-            Team explodedBy   = bombOwner;  // ← salvam INAINTE de reset
-            bombOwner         = TEAM_NEUTRAL;
+            Team explodedBy = bombOwner;  // ← salvam INAINTE de reset
+            bombOwner = TEAM_NEUTRAL;
             isBombBeeping = false;
             digitalWrite(PIN_RELAY, LOW);
             isRelayActive = true;
@@ -514,7 +524,6 @@ void loop() {
             refreshLEDs();
             Serial.println("[BOMB] EXPLOZIE!");
             loraSendUrgent(EVT_BOMB_EXPLODED, (uint8_t)explodedBy);  // ← folosim copia
-            loraPrintTiming("URGENT EXPLODE");
         } else {
             // Beep ritmic — accelereaza pe masura ce se apropie explozia
             uint32_t interval = 6000;
@@ -554,57 +563,56 @@ void loop() {
     }
 
     // Citire RFID
-    if ((currentState == STATE_PAGES || currentState == STATE_MENU ||
-        currentState == STATE_RESPAWN_SETUP) &&
-        (millis() - lastRfidRead >= 1000)) {
+    if ((currentState == STATE_PAGES || currentState == STATE_MENU || currentState == STATE_RESPAWN_SETUP) && (millis() - lastRfidRead >= 1000)) {
         RfidReadData rfid = rfidReadTag();
 
-    if (rfid.result == RFID_READ_ADMIN) {
-        // Card Admin — intram in admin mode
-        tone(PIN_BUZZER, 2000, 200);
-        previousStateBeforeAdmin = currentState;
-        adminMenuIndex = 0;
-        adminScrollIndex = 0;
-        currentAction = ACT_NONE;
-        currentState = STATE_ADMIN_MENU;
-        needsDisplayUpdate = true;
-        Serial.println("[RFID] Admin tag detectat!");
-        lastRfidRead = millis();
-        resetActivity();
-
-    } else if (rfid.result == RFID_READ_POINTS && selectedMode != -1 &&
-        !isTimeOut) {
-        // Determinam echipa proprietara
-        Team owner = TEAM_NEUTRAL;
-    if (selectedMode == 0)
-        owner = sectorOwner;
-        else if (selectedMode == 1 && isBombArmed)
-            owner = sectorOwner;
-        else if (selectedMode == 2)
-            owner = respawnTeam;
-
-        if (owner == TEAM_NEUTRAL) {
-            // Nu ardem cardul — jucatorul il poate folosi cand unitatea are proprietar
-            tone(PIN_BUZZER, 300, 400);
-            Serial.println("[RFID] Niciun proprietar. Cardul ramas intact.");
+        if (rfid.result == RFID_READ_ADMIN) {
+            // Card Admin — intram in admin mode
+            tone(PIN_BUZZER, 2000, 200);
+            previousStateBeforeAdmin = currentState;
+            adminMenuIndex = 0;
+            adminScrollIndex = 0;
+            currentAction = ACT_NONE;
+            currentState = STATE_ADMIN_MENU;
+            needsDisplayUpdate = true;
+            Serial.println("[RFID] Admin tag detectat!");
             lastRfidRead = millis();
-        } else {
-            // Ardem cardul ACUM, doar dupa ce stim ca avem proprietar valid
-            if (rfidBurnTag()) {
-                liveScore[owner - 1] += rfid.points;
-                bonusPoints           = rfid.points;
-                bonusScreenStart      = millis();
-                currentState          = STATE_BONUS_SCREEN;
-                needsDisplayUpdate    = true;
-                tone(PIN_BUZZER, 1200, 200);
-                Serial.print("[RFID] +"); Serial.print(rfid.points);
-                Serial.print(" pts -> "); Serial.println(TEAM_NAMES[owner - 1]);
+            resetActivity();
+
+        } else if (rfid.result == RFID_READ_POINTS && selectedMode != -1 && !isTimeOut) {
+            // Determinam echipa proprietara
+            Team owner = TEAM_NEUTRAL;
+            if (selectedMode == 0)
+                owner = sectorOwner;
+            else if (selectedMode == 1 && isBombArmed)
+                owner = sectorOwner;
+            else if (selectedMode == 2)
+                owner = respawnTeam;
+
+            if (owner == TEAM_NEUTRAL) {
+                // Nu ardem cardul — jucatorul il poate folosi cand unitatea are proprietar
+                tone(PIN_BUZZER, 300, 400);
+                Serial.println("[RFID] Niciun proprietar. Cardul ramas intact.");
+                lastRfidRead = millis();
             } else {
-                tone(PIN_BUZZER, 200, 300);
-                Serial.println("[RFID] EROARE la ardere! Punctele NU se acorda.");
+                // Ardem cardul ACUM, doar dupa ce stim ca avem proprietar valid
+                if (rfidBurnTag()) {
+                    liveScore[owner - 1] += rfid.points;
+                    bonusPoints = rfid.points;
+                    bonusScreenStart = millis();
+                    currentState = STATE_BONUS_SCREEN;
+                    needsDisplayUpdate = true;
+                    tone(PIN_BUZZER, 1200, 200);
+                    Serial.print("[RFID] +");
+                    Serial.print(rfid.points);
+                    Serial.print(" pts -> ");
+                    Serial.println(TEAM_NAMES[owner - 1]);
+                } else {
+                    tone(PIN_BUZZER, 200, 300);
+                    Serial.println("[RFID] EROARE la ardere! Punctele NU se acorda.");
+                }
+                lastRfidRead = millis();
             }
-            lastRfidRead = millis();
-        }
 
         } else if (rfid.result == RFID_READ_INVALID) {
             tone(PIN_BUZZER, 200, 500);
@@ -612,252 +620,274 @@ void loop() {
             lastRfidRead = millis();
             resetActivity();
         }
-        }
+    }
 
-        // Iesire jucatori din coada respawn
-        static uint8_t flashStep = 0;
-        static uint32_t flashStepStart = 0;
+    // Iesire jucatori din coada respawn
+    static uint8_t flashStep = 0;
+    static uint32_t flashStepStart = 0;
 
-        if (selectedMode == 2 && queueCount > 0) {
-            if (now >= respawnQueue[queueHead]) {
-                queueCount--;
-                queueHead = (queueHead + 1) % 100;
-                flashStep = 1;
-                flashStepStart = now;
-                needsDisplayUpdate = true;
-                Serial.println("[RESPAWN] Jucator iesit din coada!");
-            }
-        }
-
-        // Animatia flash ruleaza INDEPENDENT de queueCount
-        if (selectedMode == 2 && flashStep > 0 && (now - flashStepStart >= 100)) {
+    if (selectedMode == 2 && queueCount > 0) {
+        if (now >= respawnQueue[queueHead]) {
+            queueCount--;
+            queueHead = (queueHead + 1) % 100;
+            flashStep = 1;
             flashStepStart = now;
-            if (flashStep % 2 == 1) {
-                for (uint8_t i = 0; i < 4; i++) digitalWrite(PIN_LEDS[i], HIGH);
-                tone(PIN_BUZZER, 1500, 80);
-            } else {
-                for (uint8_t i = 0; i < 4; i++) digitalWrite(PIN_LEDS[i], LOW);
+            needsDisplayUpdate = true;
+            Serial.println("[RESPAWN] Jucator iesit din coada!");
+        }
+    }
+
+    // Animatia flash ruleaza INDEPENDENT de queueCount
+    if (selectedMode == 2 && flashStep > 0 && (now - flashStepStart >= 100)) {
+        flashStepStart = now;
+        if (flashStep % 2 == 1) {
+            for (uint8_t i = 0; i < 4; i++) digitalWrite(PIN_LEDS[i], HIGH);
+            tone(PIN_BUZZER, 1500, 80);
+        } else {
+            for (uint8_t i = 0; i < 4; i++) digitalWrite(PIN_LEDS[i], LOW);
+        }
+        flashStep++;
+        if (flashStep > 6) {
+            flashStep = 0;
+            refreshLEDs();
+        }
+    }
+
+    switch (currentState) {
+        case STATE_BOOT:
+            if (handleBoot()) {
+                currentState = STATE_MENU;
+                needsDisplayUpdate = true;
             }
-            flashStep++;
-            if (flashStep > 6) {
-                flashStep = 0;
-                refreshLEDs();
+            break;
+
+        case STATE_RESPAWN_SETUP:
+            if (needsDisplayUpdate) {
+                drawRespawnSetup();
+                needsDisplayUpdate = false;
             }
+            handleButtons();
+            break;
+
+        case STATE_ADMIN_SYNC_WARN:
+            if (needsDisplayUpdate) {
+                drawSyncWarningScreen();
+                needsDisplayUpdate = false;
+            }
+            handleButtons();
+            break;
+
+        case STATE_SYNC_RECEIVED:
+            drawSyncingScreen();
+            if (millis() - syncingStartTime >= 2000) {
+                currentState = STATE_ADMIN_MENU;
+                needsDisplayUpdate = true;
+            }
+            break;
+
+        case STATE_MENU:
+            if (needsDisplayUpdate) {
+                drawMenu(menuIndex);
+                needsDisplayUpdate = false;
+            }
+            handleButtons();
+            break;
+
+        case STATE_BOOM:
+            drawBoomScreen();
+            if (now - cooldownStartTime >= 3000) {
+                currentState = STATE_PAGES;
+                currentPage = 0;
+                needsDisplayUpdate = true;
+            }
+            break;
+
+        case STATE_ADMIN_MENU:
+            if (needsDisplayUpdate) {
+                drawAdminMenu(adminMenuIndex, adminScrollIndex, selectedMode);
+                needsDisplayUpdate = false;
+            }
+            handleButtons();
+            break;
+
+        case STATE_LOADING: {
+            uint32_t elapsed = millis() - loadingStartTime;
+            drawLoadingScreen(elapsed, 2000);
+            if (elapsed >= 2000) {
+                currentState = STATE_PAGES;
+                currentPage = 0;
+                needsDisplayUpdate = true;
+            }
+            break;
         }
 
-        switch (currentState) {
-            case STATE_BOOT:
-                if (handleBoot()) {
-                    currentState = STATE_MENU;
-                    needsDisplayUpdate = true;
-                }
+        case STATE_WAIT_ADMIN_TAG: {
+            if (needsDisplayUpdate) {
+                drawWaitAdminTag();
+                needsDisplayUpdate = false;
+            }
+
+            // Timeout 5 secunde — anulam daca nu apare cardul
+            static uint32_t waitAdminStart = 0;
+            if (needsDisplayUpdate == false && waitAdminStart == 0) waitAdminStart = millis();
+
+            if (millis() - waitAdminStart >= 5000) {
+                waitAdminStart = 0;
+                currentState = STATE_PAGES;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 200, 300);
                 break;
+            }
 
-            case STATE_RESPAWN_SETUP:
-                if (needsDisplayUpdate) {
-                    drawRespawnSetup();
-                    needsDisplayUpdate = false;
-                }
-                handleButtons();
-                break;
+            // Citim RFID
+            if (millis() - lastRfidRead >= 500) {
+                RfidReadData rfid = rfidReadTag();
+                lastRfidRead = millis();
 
-            case STATE_MENU:
-                if (needsDisplayUpdate) {
-                    drawMenu(menuIndex);
-                    needsDisplayUpdate = false;
-                }
-                handleButtons();
-                break;
-
-            case STATE_BOOM:
-                drawBoomScreen();
-                if (now - cooldownStartTime >= 3000) {
-                    currentState = STATE_PAGES;
-                    currentPage = 0;
-                    needsDisplayUpdate = true;
-                }
-                break;
-
-            case STATE_ADMIN_MENU:
-                if (needsDisplayUpdate) {
-                    drawAdminMenu(adminMenuIndex, adminScrollIndex, selectedMode);
-                    needsDisplayUpdate = false;
-                }
-                handleButtons();
-                break;
-
-            case STATE_WAIT_ADMIN_TAG: {
-                if (needsDisplayUpdate) {
-                    drawWaitAdminTag();
-                    needsDisplayUpdate = false;
-                }
-
-                // Timeout 5 secunde — anulam daca nu apare cardul
-                static uint32_t waitAdminStart = 0;
-                if (needsDisplayUpdate == false && waitAdminStart == 0)
-                    waitAdminStart = millis();
-
-                if (millis() - waitAdminStart >= 5000) {
+                if (rfid.result == RFID_READ_ADMIN) {
+                    // START JOC!
+                    isGameTimerRunning = true;
+                    loraSendStart(gameTimeLeftSeconds);
+                    digitalWrite(PIN_RELAY, LOW);
+                    isRelayActive = true;
+                    relayTurnOffTime = now + 5000;
                     waitAdminStart = 0;
                     currentState = STATE_PAGES;
+                    currentPage = 5;
                     needsDisplayUpdate = true;
-                    tone(PIN_BUZZER, 200, 300);
-                    break;
-                }
-
-                // Citim RFID
-                if (millis() - lastRfidRead >= 500) {
-                    RfidReadData rfid = rfidReadTag();
-                    lastRfidRead = millis();
-
-                    if (rfid.result == RFID_READ_ADMIN) {
-                        // START JOC!
-                        isGameTimerRunning = true;
-                        loraSendStart(gameTimeLeftSeconds);
-                        loraPrintTiming("START");
-                        digitalWrite(PIN_RELAY, LOW);
-                        isRelayActive = true;
-                        relayTurnOffTime = now + 5000;
-                        waitAdminStart = 0;
-                        currentState = STATE_PAGES;
-                        currentPage = 5;
-                        needsDisplayUpdate = true;
-                        tone(PIN_BUZZER, 1500, 200);
-                        Serial.println("[GAME] Timer pornit!");
-                    } else if (rfid.result == RFID_READ_POINTS ||
-                        rfid.result == RFID_READ_INVALID) {
-                        // Card gresit — refuz
-                        tone(PIN_BUZZER, 200, 300);
-                        }
-                }
-
-                // RED anuleaza
-                handleButtons();
-                break;
-            }
-
-            case STATE_ADMIN_PAGES:
-                if (needsDisplayUpdate) {
-                    AdminContext ac = buildAdminContext();
-                    drawAdminPages(ac);
-                    needsDisplayUpdate = false;
-                }
-                handleButtons();
-                break;
-
-            case STATE_BONUS_SCREEN:
-                drawBonusScreen(bonusPoints);
-                if (millis() - bonusScreenStart >= 2000) {
-                    currentState = STATE_PAGES;
-                    currentPage = 0;
-                    needsDisplayUpdate = true;
-                }
-                break;
-
-            case STATE_ADMIN_SAVED:
-                drawAdminSaved();
-                if (millis() - adminSavedTime >= 2000) {
-                    currentState = STATE_ADMIN_MENU;
-                    needsDisplayUpdate = true;
-                }
-                break;
-
-            case STATE_ADMIN_TAG_WRITE: {
-                // Timeout 3 secunde
-                if (tagStatusMsg == 0 && millis() - tagWaitStart >= 3000) {
-                    tagStatusMsg = 6;
-                    tagStatusTime = millis();
+                    tone(PIN_BUZZER, 1500, 200);
+                    Serial.println("[GAME] Timer pornit!");
+                } else if (rfid.result == RFID_READ_POINTS || rfid.result == RFID_READ_INVALID) {
+                    // Card gresit — refuz
                     tone(PIN_BUZZER, 200, 300);
                 }
-
-                // Afisam mesajul curent
-                drawTagWriter(tagStatusMsg);
-
-                // Dupa 2 secunde pe ecranul de rezultat, revenim
-                if (tagStatusMsg != 0 && millis() - tagStatusTime >= 2000) {
-                    currentState = STATE_ADMIN_PAGES;
-                    tagStatusMsg = 0;
-                    needsDisplayUpdate = true;
-                    break;
-                }
-
-                // Daca asteptam card, incercam sa scriem
-                if (tagStatusMsg == 0) {
-                    const uint16_t ptsOpt[] = {50,  100,  150,  200,  250, 500,
-                        750, 1000, 1500, 2000, 0};
-                        uint8_t type = (twOptionIdx == 10) ? 2 : 1;
-                        uint16_t points = ptsOpt[twOptionIdx];
-
-                        RfidWriteResult r = rfidWriteTag(type, points);
-
-                        if (r == RFID_TIMEOUT) break;  // Niciun card inca, continuam
-
-                        // Am obtinut un rezultat
-                        switch (r) {
-                            case RFID_OK_NEW:
-                                tagStatusMsg = 1;
-                                tone(PIN_BUZZER, 1500, 500);
-                                break;
-                            case RFID_OK_OVERWRITE:
-                                tagStatusMsg = 2;
-                                tone(PIN_BUZZER, 1500, 500);
-                                break;
-                            case RFID_OK_ADMIN:
-                                tagStatusMsg = 3;
-                                tone(PIN_BUZZER, 1500, 500);
-                                break;
-                            case RFID_OK_REVOKED:
-                                tagStatusMsg = 4;
-                                tone(PIN_BUZZER, 1500, 500);
-                                break;
-                            case RFID_DENIED:
-                                tagStatusMsg = 5;
-                                tone(PIN_BUZZER, 200, 400);
-                                break;
-                            default:
-                                tagStatusMsg = 7;
-                                tone(PIN_BUZZER, 200, 300);
-                                break;
-                        }
-                        tagStatusTime = millis();
-                }
-                handleButtons();
-                break;
             }
 
-                            case STATE_PAGES: {
-                                static uint32_t lastRefresh = 0;
-                                uint32_t refreshInterval = 200;
-                                if (selectedMode == 1 && isBombArmed && currentPage == 0)
-                                    refreshInterval = 50;
-                                if (needsDisplayUpdate || (millis() - lastRefresh >= refreshInterval)) {
-                                    buildContext();
-                                    drawPages(ctx);
-                                    needsDisplayUpdate = false;
-                                    lastRefresh = millis();
-                                }
-                                handleButtons();
-                                break;
-                            }
-
-                            case STATE_ACTION:
-                                // Nu apelam handleButtons() aici — citim direct starea butonului
-                                // in handleActionProgress() prin isButtonHeld()
-                                handleActionProgress();
-                                break;
-
-                            case STATE_SUCCESS:
-                                // Asteptam 3 secunde apoi revenim la pagini
-                                if (now - successStartTime >= 3000) {
-                                    currentState = STATE_PAGES;
-                                    currentPage = 0;
-                                    needsDisplayUpdate = true;
-                                }
-                                break;
-
-                            default:
-                                break;
+            // RED anuleaza
+            handleButtons();
+            break;
         }
+
+        case STATE_ADMIN_PAGES:
+            if (needsDisplayUpdate) {
+                AdminContext ac = buildAdminContext();
+                drawAdminPages(ac);
+                needsDisplayUpdate = false;
+            }
+            handleButtons();
+            break;
+
+        case STATE_BONUS_SCREEN:
+            drawBonusScreen(bonusPoints);
+            if (millis() - bonusScreenStart >= 2000) {
+                currentState = STATE_PAGES;
+                currentPage = 0;
+                needsDisplayUpdate = true;
+            }
+            break;
+
+        case STATE_ADMIN_SAVED:
+            drawAdminSaved();
+            if (millis() - adminSavedTime >= 2000) {
+                currentState = STATE_ADMIN_MENU;
+                needsDisplayUpdate = true;
+            }
+            break;
+
+        case STATE_ADMIN_TAG_WRITE: {
+            // Timeout 3 secunde
+            if (tagStatusMsg == 0 && millis() - tagWaitStart >= 3000) {
+                tagStatusMsg = 6;
+                tagStatusTime = millis();
+                tone(PIN_BUZZER, 200, 300);
+            }
+
+            // Afisam mesajul curent
+            drawTagWriter(tagStatusMsg);
+
+            // Dupa 2 secunde pe ecranul de rezultat, revenim
+            if (tagStatusMsg != 0 && millis() - tagStatusTime >= 2000) {
+                currentState = STATE_ADMIN_PAGES;
+                tagStatusMsg = 0;
+                needsDisplayUpdate = true;
+                break;
+            }
+
+            // Daca asteptam card, incercam sa scriem
+            if (tagStatusMsg == 0) {
+                const uint16_t ptsOpt[] = {50, 100, 150, 200, 250, 500, 750, 1000, 1500, 2000, 0};
+                uint8_t type = (twOptionIdx == 10) ? 2 : 1;
+                uint16_t points = ptsOpt[twOptionIdx];
+
+                RfidWriteResult r = rfidWriteTag(type, points);
+
+                if (r == RFID_TIMEOUT) break;  // Niciun card inca, continuam
+
+                // Am obtinut un rezultat
+                switch (r) {
+                    case RFID_OK_NEW:
+                        tagStatusMsg = 1;
+                        tone(PIN_BUZZER, 1500, 500);
+                        break;
+                    case RFID_OK_OVERWRITE:
+                        tagStatusMsg = 2;
+                        tone(PIN_BUZZER, 1500, 500);
+                        break;
+                    case RFID_OK_ADMIN:
+                        tagStatusMsg = 3;
+                        tone(PIN_BUZZER, 1500, 500);
+                        break;
+                    case RFID_OK_REVOKED:
+                        tagStatusMsg = 4;
+                        tone(PIN_BUZZER, 1500, 500);
+                        break;
+                    case RFID_DENIED:
+                        tagStatusMsg = 5;
+                        tone(PIN_BUZZER, 200, 400);
+                        break;
+                    default:
+                        tagStatusMsg = 7;
+                        tone(PIN_BUZZER, 200, 300);
+                        break;
+                }
+                tagStatusTime = millis();
+            }
+            handleButtons();
+            break;
+        }
+
+                    case STATE_PAGES: {
+                        static uint32_t lastRefresh = 0;
+                        uint32_t refreshInterval = 200;
+                        if (selectedMode == 1 && isBombArmed && currentPage == 0) refreshInterval = 50;
+                        if (needsDisplayUpdate || (millis() - lastRefresh >= refreshInterval)) {
+                            buildContext();
+                            drawPages(ctx);
+                            needsDisplayUpdate = false;
+                            lastRefresh = millis();
+                        }
+                        handleButtons();
+                        break;
+                    }
+
+                    case STATE_ACTION:
+                        // Nu apelam handleButtons() aici — citim direct starea butonului
+                        // in handleActionProgress() prin isButtonHeld()
+                        handleActionProgress();
+                        break;
+
+                    case STATE_SUCCESS:
+                        // Asteptam 3 secunde apoi revenim la pagini
+                        if (now - successStartTime >= 3000) {
+                            currentState = STATE_PAGES;
+                            currentPage = 0;
+                            needsDisplayUpdate = true;
+                        }
+                        break;
+
+                    default:
+                        break;
+    }
 }
 
 // ============================================================
@@ -878,47 +908,45 @@ void onShortPress(uint8_t btnIndex) {
             if (selectedMode == 2) {
                 currentState = STATE_RESPAWN_SETUP;
             } else {
-                currentState = STATE_PAGES;
-                currentPage = 0;
+                currentState = STATE_LOADING;
+                loadingStartTime = millis();
             }
             needsDisplayUpdate = true;
             Serial.print("[MENU] Mod selectat: ");
             Serial.println(selectedMode);
-            if (selectedMode == 0)      loraSendUrgent(EVT_MODE_SECTOR,  0);
-            else if (selectedMode == 1) loraSendUrgent(EVT_MODE_BOMB,    0);
-            else if (selectedMode == 2) loraSendUrgent(EVT_MODE_RESPAWN, (uint8_t)respawnTeam);
-            if (isNetworkSynced) loraPrintTiming("MODE SELECT");
+            if (selectedMode == 0)
+                loraSendUrgent(EVT_MODE_SECTOR, 0);
+            else if (selectedMode == 1)
+                loraSendUrgent(EVT_MODE_BOMB, 0);
+            else if (selectedMode == 2)
+                loraSendUrgent(EVT_MODE_RESPAWN, (uint8_t)respawnTeam);
         }
 
     } else if (currentState == STATE_PAGES) {
         // GALBEN in modul Respawn — kill inainte de orice navigare
         if (selectedMode == 2 && btnIndex == 3) {
-            bool limitReached = (teamMaxRespawns[respawnTeam - 1] > 0 &&
-            teamKills[respawnTeam - 1] >= teamMaxRespawns[respawnTeam - 1]);
+            bool limitReached = (teamMaxRespawns[respawnTeam - 1] > 0 && teamKills[respawnTeam - 1] >= teamMaxRespawns[respawnTeam - 1]);
 
-            if (!isTimeOut && !limitReached && queueCount < 100 &&
-                !(gameTimeLeftSeconds > 0 && !isGameTimerRunning)) {
+            if (!isTimeOut && !limitReached && queueCount < 100 && !(gameTimeLeftSeconds > 0 && !isGameTimerRunning)) {
                 respawnQueue[queueTail] = millis() + respawnTimeMs;
-            queueTail = (queueTail + 1) % 100;
-            queueCount++;
-            teamKills[respawnTeam - 1]++;
-            if (respawnPenaltyPoints > 0 && liveScore[respawnTeam - 1] > 0) {
-                int32_t deductie = (liveScore[respawnTeam - 1] < respawnPenaltyPoints)
-                ? liveScore[respawnTeam - 1]
-                : respawnPenaltyPoints;
-                liveScore[respawnTeam - 1] -= deductie;
-            }
-            tone(PIN_BUZZER, 1200, 100);
-            needsDisplayUpdate = true;
-            Serial.print("[RESPAWN] Kill inregistrat. Queue: ");
-            Serial.println(queueCount);
-                } else if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
-                    tone(PIN_BUZZER, 200, 200);
-                } else if (limitReached) {
-                    tone(PIN_BUZZER, 200, 300);
-                    return;
+                queueTail = (queueTail + 1) % 100;
+                queueCount++;
+                teamKills[respawnTeam - 1]++;
+                if (respawnPenaltyPoints > 0 && liveScore[respawnTeam - 1] > 0) {
+                    int32_t deductie = (liveScore[respawnTeam - 1] < respawnPenaltyPoints) ? liveScore[respawnTeam - 1] : respawnPenaltyPoints;
+                    liveScore[respawnTeam - 1] -= deductie;
                 }
+                tone(PIN_BUZZER, 1200, 100);
+                needsDisplayUpdate = true;
+                Serial.print("[RESPAWN] Kill inregistrat. Queue: ");
+                Serial.println(queueCount);
+            } else if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
+                tone(PIN_BUZZER, 200, 200);
+            } else if (limitReached) {
+                tone(PIN_BUZZER, 200, 300);
                 return;
+            }
+            return;
         }
 
         // Navigare normala
@@ -949,8 +977,8 @@ void onShortPress(uint8_t btnIndex) {
 
     } else if (currentState == STATE_RESPAWN_SETUP) {
         respawnTeam = (Team)(btnIndex + 1);
-        currentState = STATE_PAGES;
-        currentPage = 0;
+        currentState = STATE_LOADING;
+        loadingStartTime = millis();
         queueCount = queueHead = queueTail = 0;
         memset(respawnQueue, 0, sizeof(respawnQueue));
         refreshLEDs();
@@ -980,22 +1008,9 @@ void onShortPress(uint8_t btnIndex) {
             needsDisplayUpdate = true;
 
         } else if (btnIndex == 3) {
-                if (adminMenuIndex == 3) {
-            // SYNC SETTINGS
-            loraSendSync(
-                gsTimeLimit, gsBonus, gsWinCond,
-                bsTimerIdx, bsCooldownIdx,
-                bsExpPtsIdx, bsDefPtsIdx,
-                rsTimeIdx, rsPenaltyIdx,
-                rsLimitIdx,
-                isGameTimerRunning, isTimeOut,
-                gameTimeLeftSeconds,
-                liveScore, teamKills
-            );
-            loraPrintTiming("SYNC SENT");
-            tone(PIN_BUZZER, 1800, 400);
-            currentState = previousStateBeforeAdmin;
-            needsDisplayUpdate = true;
+            if (adminMenuIndex == 3) {
+                currentState = STATE_ADMIN_SYNC_WARN;
+                needsDisplayUpdate = true;
             }
             // GALBEN — confirmare
             else if (adminMenuIndex == 5) {
@@ -1013,7 +1028,7 @@ void onShortPress(uint8_t btnIndex) {
                 refreshLEDs();
                 needsDisplayUpdate = true;
                 tone(PIN_BUZZER, 1000, 300);
-
+                loraSendUrgent(EVT_MODE_UNSET, 0);
             } else if (adminMenuIndex == 6) {
                 // SYSTEM RESTART
                 display.clearDisplay();
@@ -1024,31 +1039,46 @@ void onShortPress(uint8_t btnIndex) {
                 display.display();
                 tone(PIN_BUZZER, 2000, 800);
                 loraSendRestartBlocking();
-                loraPrintTiming("RESTART");
                 ESP.restart();
 
             } else {
-                if      (adminMenuIndex == 0) adminSelectedPage = 0; // Game Settings
-                else if (adminMenuIndex == 1) adminSelectedPage = 1; // Bomb Settings
-                else if (adminMenuIndex == 2) adminSelectedPage = 2; // Respawn Settings
-                else if (adminMenuIndex == 4) adminSelectedPage = 3; // TAG Writer
-                gsIndex=bsIndex=rsIndex=twIndex=0;
+                if (adminMenuIndex == 0)
+                    adminSelectedPage = 0;  // Game Settings
+                    else if (adminMenuIndex == 1)
+                        adminSelectedPage = 1;  // Bomb Settings
+                        else if (adminMenuIndex == 2)
+                            adminSelectedPage = 2;  // Respawn Settings
+                            else if (adminMenuIndex == 4)
+                                adminSelectedPage = 3;  // TAG Writer
+                                gsIndex = bsIndex = rsIndex = twIndex = 0;
 
-                // Sincronizam indecșii vizuali cu valorile reale curente
-                const uint32_t tv[]={5,10,15,20,30,45,60,120};
-                for (uint8_t i=0; i<8; i++)
-                    if (tv[i]*60000UL == bombTimerMs) { bsTimerIdx=i; break; }
-                    for (uint8_t i=0; i<8; i++)
-                        if (tv[i]*60000UL == cooldownMs)  { bsCooldownIdx=i; break; }
+                            // Sincronizam indecșii vizuali cu valorile reale curente
+                            const uint32_t tv[] = {5, 10, 15, 20, 30, 45, 60, 120};
+                        for (uint8_t i = 0; i < 8; i++)
+                            if (tv[i] * 60000UL == bombTimerMs) {
+                                bsTimerIdx = i;
+                                break;
+                            }
+                            for (uint8_t i = 0; i < 8; i++)
+                                if (tv[i] * 60000UL == cooldownMs) {
+                                    bsCooldownIdx = i;
+                                    break;
+                                }
 
-                        const uint32_t pv[]={50,100,200,300,400,500,600,700,800,900,1000,1500,2000,2500,3000};
-                    for (uint8_t i=0; i<15; i++)
-                        if (pv[i] == bombPointsExplode) { bsExpPtsIdx=i; break; }
-                        for (uint8_t i=0; i<15; i++)
-                            if (pv[i] == bombPointsDefuse)  { bsDefPtsIdx=i; break; }
+                                const uint32_t pv[] = {50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000};
+                            for (uint8_t i = 0; i < 15; i++)
+                                if (pv[i] == bombPointsExplode) {
+                                    bsExpPtsIdx = i;
+                                    break;
+                                }
+                                for (uint8_t i = 0; i < 15; i++)
+                                    if (pv[i] == bombPointsDefuse) {
+                                        bsDefPtsIdx = i;
+                                        break;
+                                    }
 
-                            currentState = STATE_ADMIN_PAGES;
-                        needsDisplayUpdate = true;
+                                    currentState = STATE_ADMIN_PAGES;
+                                needsDisplayUpdate = true;
             }
 
         } else if (btnIndex == 0) {
@@ -1078,16 +1108,14 @@ void onShortPress(uint8_t btnIndex) {
                     gsBonus = (gsBonus + 1) % 7;
                 else if (gsIndex == 3) {
                     // CONFIRM
-                    const uint32_t tl[] = {0,     10,    3600,  7200,  10800,
-                        14400, 18000, 21600, 25200, 28800,
-                        32400, 36000, 39600, 43200, 86400};
-                        const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
-                        gameTimeLeftSeconds = tl[gsTimeLimit];
-                        bonusIntervalMinutes = bn[gsBonus];
-                        currentWinCondition = (WinCondition)gsWinCond;
-                        adminSavedTime = millis();
-                        tone(PIN_BUZZER, 1500, 300);
-                        currentState = STATE_ADMIN_SAVED;
+                    const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400, 18000, 21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
+                    const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
+                    gameTimeLeftSeconds = tl[gsTimeLimit];
+                    bonusIntervalMinutes = bn[gsBonus];
+                    currentWinCondition = (WinCondition)gsWinCond;
+                    adminSavedTime = millis();
+                    tone(PIN_BUZZER, 1500, 300);
+                    currentState = STATE_ADMIN_SAVED;
                 }
                 needsDisplayUpdate = true;
             }
@@ -1107,15 +1135,14 @@ void onShortPress(uint8_t btnIndex) {
                     bsDefPtsIdx = (bsDefPtsIdx + 1) % 15;
                 else if (bsIndex == 4) {
                     const uint32_t tv[] = {5, 10, 15, 20, 30, 45, 60, 120};
-                    const uint32_t pv[] = {50,  100, 200,  300,  400,  500,  600, 700,
-                        800, 900, 1000, 1500, 2000, 2500, 3000};
-                        bombTimerMs = tv[bsTimerIdx] * 60000UL;
-                        cooldownMs = tv[bsCooldownIdx] * 60000UL;
-                        bombPointsExplode = pv[bsExpPtsIdx];
-                        bombPointsDefuse = pv[bsDefPtsIdx];
-                        adminSavedTime = millis();
-                        tone(PIN_BUZZER, 1500, 300);
-                        currentState = STATE_ADMIN_SAVED;
+                    const uint32_t pv[] = {50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000};
+                    bombTimerMs = tv[bsTimerIdx] * 60000UL;
+                    cooldownMs = tv[bsCooldownIdx] * 60000UL;
+                    bombPointsExplode = pv[bsExpPtsIdx];
+                    bombPointsDefuse = pv[bsDefPtsIdx];
+                    adminSavedTime = millis();
+                    tone(PIN_BUZZER, 1500, 300);
+                    currentState = STATE_ADMIN_SAVED;
                 }
                 needsDisplayUpdate = true;
             }
@@ -1132,15 +1159,12 @@ void onShortPress(uint8_t btnIndex) {
                 else if (rsIndex >= 2 && rsIndex <= 5)
                     rsLimitIdx[rsIndex - 2] = (rsLimitIdx[rsIndex - 2] + 1) % 11;
                 else if (rsIndex == 6) {
-                    const uint32_t ts[] = {10,  30,  60,  120,  180,  240,
-                        300, 600, 900, 1200, 1500, 1800};
-                        const uint16_t pp[] = {0, 5, 10, 25, 50, 75, 100};
-                        const uint16_t lm[] = {0,   10,  25,  50,  75,  100,
-                            200, 300, 400, 500, 1000};
-                            respawnTimeMs = ts[rsTimeIdx] * 1000UL;
-                            respawnPenaltyPoints = pp[rsPenaltyIdx];
-                            for (uint8_t i = 0; i < 4; i++)
-                                teamMaxRespawns[i] = lm[rsLimitIdx[i]];
+                    const uint32_t ts[] = {10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1500, 1800};
+                    const uint16_t pp[] = {0, 5, 10, 25, 50, 75, 100};
+                    const uint16_t lm[] = {0, 10, 25, 50, 75, 100, 200, 300, 400, 500, 1000};
+                    respawnTimeMs = ts[rsTimeIdx] * 1000UL;
+                    respawnPenaltyPoints = pp[rsPenaltyIdx];
+                    for (uint8_t i = 0; i < 4; i++) teamMaxRespawns[i] = lm[rsLimitIdx[i]];
                     adminSavedTime = millis();
                     tone(PIN_BUZZER, 1500, 300);
                     currentState = STATE_ADMIN_SAVED;
@@ -1171,6 +1195,28 @@ void onShortPress(uint8_t btnIndex) {
             currentState = STATE_PAGES;
             needsDisplayUpdate = true;
             tone(PIN_BUZZER, 200, 200);
+        }
+    } else if (currentState == STATE_ADMIN_SYNC_WARN) {
+        if (btnIndex == 0) {
+            // RED — inapoi la admin menu
+            currentState = STATE_ADMIN_MENU;
+            needsDisplayUpdate = true;
+        } else if (btnIndex == 1) {
+            // BLUE — trimitem sync
+            loraSendSync(
+                gsTimeLimit, gsBonus, gsWinCond,
+                bsTimerIdx, bsCooldownIdx,
+                bsExpPtsIdx, bsDefPtsIdx,
+                rsTimeIdx, rsPenaltyIdx,
+                rsLimitIdx,
+                isGameTimerRunning, isTimeOut,
+                gameTimeLeftSeconds,
+                liveScore, teamKills
+            );
+            syncingStartTime = millis();
+            currentState = STATE_SYNC_RECEIVED;
+            needsDisplayUpdate = true;
+            tone(PIN_BUZZER, 1800, 400);
         }
     }
 }

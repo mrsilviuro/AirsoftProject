@@ -29,6 +29,7 @@
 #define EVT_MODE_SECTOR     6
 #define EVT_MODE_BOMB       7
 #define EVT_MODE_RESPAWN    8
+#define EVT_MODE_UNSET      9
 
 // ============================================================
 // Stare retea — accesibila din .ino

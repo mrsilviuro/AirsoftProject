@@ -70,6 +70,7 @@ struct PageContext {
 // Initializare
 // ============================================================
 void displayInit();
+void drawLoadingScreen(uint32_t elapsed, uint32_t totalMs);
 
 // ============================================================
 // Ecran BOOT
@@ -165,3 +166,6 @@ void drawTagWriter(uint8_t statusMsg);
 // Helper — Scrollbar vertical (folosit pe paginile 4 si 5)
 // ============================================================
 void drawScrollbar(uint8_t totalItems, uint8_t visibleItems, uint8_t scrollIndex, uint8_t yStart, uint8_t barHeight);
+
+void drawSyncWarningScreen();
+void drawSyncingScreen();

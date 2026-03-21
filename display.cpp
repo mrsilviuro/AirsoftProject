@@ -25,7 +25,7 @@ void displayInit() {
     display.setTextColor(SSD1306_WHITE);
     display.display();
     display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(175); // 80%
+    display.ssd1306_command(175);  // 80%
     // Pornim ceasul de boot si melodia
     bootStartTime = millis();
     noteStartTime = millis();
@@ -104,23 +104,23 @@ bool handleBoot() {
 static const unsigned char POINT_BMP[] PROGMEM = {0x38, 0x7C, 0xFE, 0xFE, 0xFE, 0x7C, 0x38};
 static const unsigned char SKULL_BMP[] PROGMEM = {0x10, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x10};
 static const unsigned char ARROW_LEFT[] PROGMEM = {
-    0x08, // 00001000
-    0x18, // 00011000
-    0x38, // 00111000
-    0x78, // 01111000
-    0x38, // 00111000
-    0x18, // 00011000
-    0x08  // 00001000
+    0x08,  // 00001000
+    0x18,  // 00011000
+    0x38,  // 00111000
+    0x78,  // 01111000
+    0x38,  // 00111000
+    0x18,  // 00011000
+    0x08   // 00001000
 };
 
 static const unsigned char ARROW_RIGHT[] PROGMEM = {
-    0x80, // 10000000
-    0xC0, // 11000000
-    0xE0, // 11100000
-    0xF0, // 11110000
-    0xE0, // 11100000
-    0xC0, // 11000000
-    0x80  // 10000000
+    0x80,  // 10000000
+    0xC0,  // 11000000
+    0xE0,  // 11100000
+    0xF0,  // 11110000
+    0xE0,  // 11100000
+    0xC0,  // 11000000
+    0x80   // 10000000
 };
 // ============================================================
 // drawMenu()
@@ -273,11 +273,16 @@ void drawPageHeader(uint8_t currentPage, uint8_t batteryPercent) {
     // Baterie
     bool drawBat = true;
     uint8_t bars = 0;
-    if      (batteryPercent >= 80) bars = 4;
-    else if (batteryPercent >= 60) bars = 3;
-    else if (batteryPercent >= 40) bars = 2;
-    else if (batteryPercent >= 20) bars = 1;
-    else if (batteryPercent >= 10) bars = 0;
+    if (batteryPercent >= 80)
+        bars = 4;
+    else if (batteryPercent >= 60)
+        bars = 3;
+    else if (batteryPercent >= 40)
+        bars = 2;
+    else if (batteryPercent >= 20)
+        bars = 1;
+    else if (batteryPercent >= 10)
+        bars = 0;
     else {
         bars = 0;
         if ((millis() / 500) % 2 == 0) drawBat = false;
@@ -848,10 +853,7 @@ void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) 
     display.print("Admin Mode");
     display.drawLine(0, 10, SCREEN_WIDTH, 10, SSD1306_WHITE);
 
-    const char* const items[7] = {
-        "Game Settings", "Bomb Parameters", "Respawn Rules",
-        "Sync Units", "TAG Writer", "Change Mode", "System Restart"
-    };
+    const char* const items[7] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart"};
 
     uint8_t shown = 0;
     for (uint8_t i = scrollIndex; i < 7; i++) {
@@ -880,10 +882,7 @@ void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) 
 void drawAdminPages(const AdminContext& ac) {
     display.clearDisplay();
     display.setTextSize(1);
-    const char* const items[7] = {
-        "Game Settings", "Bomb Parameters", "Respawn Rules",
-        "Sync Units", "TAG Writer", "Change Mode", "System Restart"
-    };
+    const char* const items[7] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart"};
     if (ac.selectedPage == 0) {
         // --- GAME SETTINGS ---
         const char* const wcT[] = {"By Points", "By Conquest", "By Any"};
@@ -1113,5 +1112,61 @@ void drawWaitAdminTag() {
     display.setCursor(x, 36);
     display.print(l2);
 
+    display.display();
+}
+
+void drawLoadingScreen(uint32_t elapsed, uint32_t totalMs) {
+    display.clearDisplay();
+
+    // "LOADING ..." centrat vertical in jumatatea de sus
+    display.setTextSize(1);
+    const char* msg = "LOADING ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
+    display.setCursor(x, 22);
+    display.print(msg);
+
+    // Bara de progres — contur
+    display.drawRect(14, 35, 100, 10, SSD1306_WHITE);
+
+    // Umplere fluida
+    uint8_t barW = (uint8_t)((uint32_t)96 * elapsed / totalMs);
+    if (barW > 96) barW = 96;
+    if (barW > 0) display.fillRect(16, 37, barW, 6, SSD1306_WHITE);
+
+    display.display();
+}
+
+void drawSyncWarningScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    uint8_t x;
+    const char* l1 = "--- WARNING ---";
+    x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setCursor(x, 0); display.print(l1);
+    const char* l2 = "All active units";
+    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
+    display.setCursor(x, 12); display.print(l2);
+    const char* l3 = "will sync data to";
+    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
+    display.setCursor(x, 22); display.print(l3);
+    const char* l4 = "match this unit.";
+    x = (SCREEN_WIDTH - (strlen(l4) * 6)) / 2;
+    display.setCursor(x, 32); display.print(l4);
+    const char* l5 = "Continue?";
+    x = (SCREEN_WIDTH - (strlen(l5) * 6)) / 2;
+    display.setCursor(x, 42); display.print(l5);
+    const char* l6 = "RED: No     BLUE: Yes";
+    x = (SCREEN_WIDTH - (strlen(l6) * 6)) / 2;
+    display.setCursor(x, 56); display.print(l6);
+    display.display();
+}
+
+void drawSyncingScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* msg = "SYNCING ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
+    display.setCursor(x, 28);
+    display.print(msg);
     display.display();
 }
