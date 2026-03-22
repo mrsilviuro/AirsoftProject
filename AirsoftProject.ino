@@ -403,6 +403,50 @@ void loraPrintTiming(const char* label) {
     Serial.println("ms");
 }
 
+void syncAdminIndices() {
+    gsIndex = bsIndex = rsIndex = twIndex = 0;
+
+    // Game Settings — recalculam gsTimeLimit din gameTimeLeftSeconds
+    const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400, 18000,
+        21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
+        for (uint8_t i = 0; i < 15; i++)
+            if (tl[i] == gameTimeLeftSeconds) { gsTimeLimit = i; break; }
+
+            const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
+        for (uint8_t i = 0; i < 7; i++)
+            if (bn[i] == bonusIntervalMinutes) { gsBonus = i; break; }
+
+            gsWinCond = (uint8_t)currentWinCondition;
+
+        // Bomb Settings
+        const uint32_t tv[] = {5, 10, 15, 20, 30, 45, 60, 120};
+        for (uint8_t i = 0; i < 8; i++)
+            if (tv[i] * 60000UL == bombTimerMs)  { bsTimerIdx = i; break; }
+            for (uint8_t i = 0; i < 8; i++)
+                if (tv[i] * 60000UL == cooldownMs)   { bsCooldownIdx = i; break; }
+
+                const uint32_t pv[] = {50, 100, 200, 300, 400, 500, 600, 700,
+                    800, 900, 1000, 1500, 2000, 2500, 3000};
+                    for (uint8_t i = 0; i < 15; i++)
+                        if (pv[i] == bombPointsExplode) { bsExpPtsIdx = i; break; }
+                        for (uint8_t i = 0; i < 15; i++)
+                            if (pv[i] == bombPointsDefuse)  { bsDefPtsIdx = i; break; }
+
+                            // Respawn Settings
+                            const uint32_t ts[] = {10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1500, 1800};
+                        for (uint8_t i = 0; i < 12; i++)
+                            if (ts[i] * 1000UL == respawnTimeMs) { rsTimeIdx = i; break; }
+
+                            const uint16_t pp[] = {0, 5, 10, 25, 50, 75, 100};
+                        for (uint8_t i = 0; i < 7; i++)
+                            if (pp[i] == respawnPenaltyPoints) { rsPenaltyIdx = i; break; }
+
+                            const uint16_t lm[] = {0, 10, 25, 50, 75, 100, 200, 300, 400, 500, 1000};
+                        for (uint8_t t = 0; t < 4; t++)
+                            for (uint8_t i = 0; i < 11; i++)
+                                if (lm[i] == teamMaxRespawns[t]) { rsLimitIdx[t] = i; break; }
+}
+
 // ============================================================
 // setup()
 // ============================================================
@@ -1042,43 +1086,13 @@ void onShortPress(uint8_t btnIndex) {
                 ESP.restart();
 
             } else {
-                if (adminMenuIndex == 0)
-                    adminSelectedPage = 0;  // Game Settings
-                    else if (adminMenuIndex == 1)
-                        adminSelectedPage = 1;  // Bomb Settings
-                        else if (adminMenuIndex == 2)
-                            adminSelectedPage = 2;  // Respawn Settings
-                            else if (adminMenuIndex == 4)
-                                adminSelectedPage = 3;  // TAG Writer
-                                gsIndex = bsIndex = rsIndex = twIndex = 0;
-
-                            // Sincronizam indecșii vizuali cu valorile reale curente
-                            const uint32_t tv[] = {5, 10, 15, 20, 30, 45, 60, 120};
-                        for (uint8_t i = 0; i < 8; i++)
-                            if (tv[i] * 60000UL == bombTimerMs) {
-                                bsTimerIdx = i;
-                                break;
-                            }
-                            for (uint8_t i = 0; i < 8; i++)
-                                if (tv[i] * 60000UL == cooldownMs) {
-                                    bsCooldownIdx = i;
-                                    break;
-                                }
-
-                                const uint32_t pv[] = {50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000};
-                            for (uint8_t i = 0; i < 15; i++)
-                                if (pv[i] == bombPointsExplode) {
-                                    bsExpPtsIdx = i;
-                                    break;
-                                }
-                                for (uint8_t i = 0; i < 15; i++)
-                                    if (pv[i] == bombPointsDefuse) {
-                                        bsDefPtsIdx = i;
-                                        break;
-                                    }
-
-                                    currentState = STATE_ADMIN_PAGES;
-                                needsDisplayUpdate = true;
+                if      (adminMenuIndex == 0) adminSelectedPage = 0;
+                else if (adminMenuIndex == 1) adminSelectedPage = 1;
+                else if (adminMenuIndex == 2) adminSelectedPage = 2;
+                else if (adminMenuIndex == 4) adminSelectedPage = 3;
+                syncAdminIndices();  // ← o singura linie in loc de tot blocul
+                currentState = STATE_ADMIN_PAGES;
+                needsDisplayUpdate = true;
             }
 
         } else if (btnIndex == 0) {
