@@ -1170,3 +1170,29 @@ void drawSyncingScreen() {
     display.print(msg);
     display.display();
 }
+
+void drawReadyScreen(int8_t selectedMode) {
+    display.clearDisplay();
+
+    const char* l1 = "System Ready ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setTextSize(1);
+    display.setCursor(x, 10);
+    display.print(l1);
+
+    const char* l2 = "GOOD LUCK!";
+    display.setTextSize(2);
+    x = (SCREEN_WIDTH - (strlen(l2) * 12)) / 2;
+    display.setCursor(x, 24);
+    display.print(l2);
+
+    const char* l3 = selectedMode == 0 ? "Sector Unit" :
+    selectedMode == 1 ? "Bomb Unit"   :
+    "Respawn Unit";
+    display.setTextSize(1);
+    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
+    display.setCursor(x, 50);
+    display.print(l3);
+
+    display.display();
+}

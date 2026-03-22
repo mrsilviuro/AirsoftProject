@@ -71,6 +71,7 @@ struct PageContext {
 // ============================================================
 void displayInit();
 void drawLoadingScreen(uint32_t elapsed, uint32_t totalMs);
+void drawReadyScreen(int8_t selectedMode);
 
 // ============================================================
 // Ecran BOOT

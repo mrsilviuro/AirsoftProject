@@ -18,6 +18,7 @@ bool isDimmed = false;
 uint8_t menuIndex = 0;
 int8_t selectedMode = -1;
 uint32_t loadingStartTime = 0;
+uint32_t readyScreenStart = 0;
 
 // --- Pagini ---
 uint8_t currentPage = 0;
@@ -758,9 +759,28 @@ void loop() {
             uint32_t elapsed = millis() - loadingStartTime;
             drawLoadingScreen(elapsed, 2000);
             if (elapsed >= 2000) {
+                readyScreenStart = millis();
+                currentState = STATE_READY;
+                needsDisplayUpdate = true;
+                for (uint8_t i = 0; i < 4; i++) digitalWrite(PIN_LEDS[i], HIGH);
+                tone(PIN_BUZZER, 1500, 500);  // ← aici, o singura data
+            }
+            break;
+        }
+
+        case STATE_READY: {
+            if (needsDisplayUpdate) {
+                drawReadyScreen(selectedMode);
+                needsDisplayUpdate = false;
+            }
+            // Beepuri non-blocking folosind elapsed
+            uint32_t el = millis() - readyScreenStart;
+
+            if (el >= 2000) {
                 currentState = STATE_PAGES;
                 currentPage = 0;
                 needsDisplayUpdate = true;
+                refreshLEDs(); // Resetam LED-urile la starea corecta
             }
             break;
         }
