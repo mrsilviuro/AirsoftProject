@@ -455,7 +455,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         currentSyncID[2] = buf[7];
         currentSyncID[3] = '\0';
 
-        // Setari
+        // Setari joc
         rx_gsTimeLimit   = (buf[8]  >> 4) & 0x0F;
         rx_gsBonus       =  buf[8]        & 0x0F;
         rx_bsTimerIdx    = (buf[9]  >> 4) & 0x0F;
@@ -470,6 +470,17 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         rx_rsLimitIdx[3] =  buf[13]       & 0x0F;
         rx_gsWinCond     = (buf[14] >> 4) & 0x03;
         loraSettingsReceived = true;
+
+        // Trailing Edge sync
+        syncReceivedTime         = now;
+        isNetworkSynced          = true;
+        isMasterNode             = false;
+        hasTransmittedThisMinute = false;
+        finalHeartbeatSent       = false;
+        syncEpochSeconds         = 59;
+        lastEpochTick            = now + 4000;
+        loraSyncJustReceived     = true;
+        loraSyncFromUnit         = sender;
 
         // Flags
         bool isRunning  = (buf[14] & 0x80) != 0;
@@ -501,12 +512,15 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         }
 
         if (isRunning) {
-            isGameTimerRunning = true;
+            isGameTimerRunning  = true;
+            gameTimeLeftSeconds = timeLeft;
         } else if (wasTimeOut) {
-            isTimeOut          = true;
-            isGameTimerRunning = false;
-            gameTimeLeftSeconds = 0;     // ← doar la timeout resetam la 0
+            isTimeOut           = true;
+            isGameTimerRunning  = false;
+            gameTimeLeftSeconds = 0;
         } else {
+            // Joc configurat dar nepornit — aplicam timpul setat
+            isGameTimerRunning  = false;
             gameTimeLeftSeconds = timeLeft;
         }
 
