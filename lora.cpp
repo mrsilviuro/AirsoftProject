@@ -78,6 +78,8 @@ uint8_t rx_bsExpPtsIdx = 0, rx_bsDefPtsIdx = 0;
 uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
 uint8_t rx_rsLimitIdx[4] = {0};
 
+bool loraStartJustSent = false;
+
 // ============================================================
 // Helper — CRC
 // ============================================================
@@ -165,55 +167,56 @@ static uint32_t smartJitter(uint32_t pktDurationMs = 500) {
 // ============================================================
 // Constructori pachete
 // ============================================================
-static void buildHeartbeat(int32_t liveScore[4], uint16_t teamKills[4], uint8_t selectedMode, Team sectorOwner, bool isBombArmed, Team respawnTeam, uint8_t batteryPercent) {
-    memset(txBuf, 0, 16);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
+static void buildHeartbeat(
+    int32_t liveScore[4], uint16_t teamKills[4],
+    uint8_t selectedMode, Team sectorOwner,
+    bool isBombArmed, Team respawnTeam,
+    uint8_t batteryPercent) {
+
+    memset(txBuf, 0, 24);
+    txBuf[0] = NETWORK_ID[0]; txBuf[1] = NETWORK_ID[1]; txBuf[2] = NETWORK_ID[2];
     txBuf[3] = PKT_HEARTBEAT;
     txBuf[4] = UNIT_ID;
 
+    // Scoruri int16_t x4
     for (uint8_t i = 0; i < 4; i++) {
         int32_t score = liveScore[i];
-        if (score > 32767) score = 32767;
+        if (score >  32767) score =  32767;
         if (score < -32768) score = -32768;
         int16_t s16 = (int16_t)score;
-        txBuf[5 + i * 2] = (s16 >> 8) & 0xFF;
-        txBuf[5 + i * 2 + 1] = s16 & 0xFF;
+        txBuf[5 + i*2]     = (s16 >> 8) & 0xFF;
+        txBuf[5 + i*2 + 1] =  s16 & 0xFF;
     }
 
+    // Killuri uint16_t x4
+    for (uint8_t i = 0; i < 4; i++) {
+        txBuf[13 + i*2]     = (teamKills[i] >> 8) & 0xFF;
+        txBuf[13 + i*2 + 1] =  teamKills[i] & 0xFF;
+    }
+
+    // Mode si status
     uint8_t mode = 0;
-    if (selectedMode == 0)
-        mode = 1;
-    else if (selectedMode == 1)
-        mode = 2;
-    else if (selectedMode == 2)
-        mode = 3;
+    if      (selectedMode == 0) mode = 1;
+    else if (selectedMode == 1) mode = 2;
+    else if (selectedMode == 2) mode = 3;
 
     uint8_t status = 0;
-    if (mode == 1)
-        status = (uint8_t)sectorOwner;
-    else if (mode == 2)
-        status = isBombArmed ? 9 : 0;
-    else if (mode == 3)
-        status = (uint8_t)respawnTeam;
+    if      (mode == 1) status = (uint8_t)sectorOwner;
+    else if (mode == 2) status = isBombArmed ? 9 : 0;
+    else if (mode == 3) status = (uint8_t)respawnTeam;
 
     uint8_t batLvl = 0;
-    if (batteryPercent >= 80)
-        batLvl = 4;
-    else if (batteryPercent >= 60)
-        batLvl = 3;
-    else if (batteryPercent >= 40)
-        batLvl = 2;
-    else if (batteryPercent >= 20)
-        batLvl = 1;
+    if      (batteryPercent >= 80) batLvl = 4;
+    else if (batteryPercent >= 60) batLvl = 3;
+    else if (batteryPercent >= 40) batLvl = 2;
+    else if (batteryPercent >= 20) batLvl = 1;
 
-    txBuf[13] = ((mode & 0x0F) << 4) | (status & 0x0F);
-    txBuf[14] = ((batLvl & 0x0F) << 4) | (pendingEventType & 0x0F);
-    txBuf[15] = calcCRC(txBuf, 15, true);
-    txLen = 16;
+    txBuf[21] = ((mode   & 0x0F) << 4) | (status & 0x0F);
+    txBuf[22] = ((batLvl & 0x0F) << 4) | (pendingEventType & 0x0F);
+    txBuf[23] = calcCRC(txBuf, 23, true);
+    txLen     = 24;
     txPktType = PKT_HEARTBEAT;
-}
+    }
 
 static void printTimingSuffix() {
     if (!isNetworkSynced || millis() < lastEpochTick) {
@@ -300,15 +303,17 @@ static void buildUrgent(uint8_t eventType, uint8_t teamId) {
     txPktType = PKT_URGENT;
 }
 
-static void buildEpochSync() {
-    memset(txBuf, 0, 6);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
+static void buildEpochSync(uint32_t timeLeft) {
+    memset(txBuf, 0, 10);
+    txBuf[0] = NETWORK_ID[0]; txBuf[1] = NETWORK_ID[1]; txBuf[2] = NETWORK_ID[2];
     txBuf[3] = PKT_EPOCH_SYNC;
     txBuf[4] = UNIT_ID;
-    txBuf[5] = calcCRC(txBuf, 5, true);
-    txLen = 6;
+    txBuf[5] = (timeLeft >> 24) & 0xFF;
+    txBuf[6] = (timeLeft >> 16) & 0xFF;
+    txBuf[7] = (timeLeft >> 8)  & 0xFF;
+    txBuf[8] =  timeLeft        & 0xFF;
+    txBuf[9] = calcCRC(txBuf, 9, true);
+    txLen     = 10;
     txPktType = PKT_EPOCH_SYNC;
 }
 
@@ -393,8 +398,9 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
 
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
-        isGameTimerRunning  = true;          // ← modifica variabila din .ino
-        gameTimeLeftSeconds = s_gameTimeLeft; // ← sincronizam cu ce am trimis
+        isGameTimerRunning  = true;
+        gameTimeLeftSeconds = s_gameTimeLeft;
+        loraStartJustSent   = true;  // ← flag pentru reset tick
     } else if (txPktType == PKT_URGENT) {
         Serial.print("[LORA] Urgent trimis: ");
         Serial.println(s_urgentEvent);
@@ -471,17 +477,6 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         rx_gsWinCond     = (buf[14] >> 4) & 0x03;
         loraSettingsReceived = true;
 
-        // Trailing Edge sync
-        syncReceivedTime         = now;
-        isNetworkSynced          = true;
-        isMasterNode             = false;
-        hasTransmittedThisMinute = false;
-        finalHeartbeatSent       = false;
-        syncEpochSeconds         = 59;
-        lastEpochTick            = now + 4000;
-        loraSyncJustReceived     = true;
-        loraSyncFromUnit         = sender;
-
         // Flags
         bool isRunning  = (buf[14] & 0x80) != 0;
         bool wasTimeOut = (buf[14] & 0x40) != 0;
@@ -543,41 +538,46 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             uint32_t timeLeft = ((uint32_t)buf[5] << 24) | ((uint32_t)buf[6] << 16) | ((uint32_t)buf[7] << 8) | buf[8];
             isGameTimerRunning = true;
             gameTimeLeftSeconds = timeLeft;
+            loraStartJustSent   = true;
             tone(PIN_BUZZER, 1500, 500);
             Serial.println("[LORA] START primit!");
         }
 
     } else if (pktType == PKT_HEARTBEAT) {
+        // Scoruri
         for (uint8_t i = 0; i < 4; i++) {
-            int16_t rx = (int16_t)(((uint16_t)buf[5 + i * 2] << 8) | buf[6 + i * 2]);
-            if ((int32_t)rx > globalScores[sender - 1][i]) globalScores[sender - 1][i] = rx;
+            int16_t rx = (int16_t)(((uint16_t)buf[5 + i*2] << 8) | buf[6 + i*2]);
+            if ((int32_t)rx > globalScores[sender-1][i])
+                globalScores[sender-1][i] = rx;
         }
 
-        uint8_t mode = (buf[13] >> 4) & 0x0F;
-        uint8_t status = buf[13] & 0x0F;
-        globalUnitMode[sender - 1] = mode;
+        // Killuri — regula "nu mai mic"
+        for (uint8_t i = 0; i < 4; i++) {
+            uint16_t rx = ((uint16_t)buf[13 + i*2] << 8) | buf[14 + i*2];
+            if (rx > globalKillsNet[sender-1][i])
+                globalKillsNet[sender-1][i] = rx;
+        }
 
-        if (mode == 1)
-            globalUnitStatus[sender - 1] = (Team)status;
-        else if (mode == 2)
-            globalUnitStatus[sender - 1] = (status == 9) ? TEAM_PLANTED : TEAM_NEUTRAL;
-        else if (mode == 3)
-            globalUnitStatus[sender - 1] = (Team)status;
-        else
-            globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
+        // Mode, status, battery, piggyback — acum la bytes 21-22
+        uint8_t mode   = (buf[21] >> 4) & 0x0F;
+        uint8_t status =  buf[21]        & 0x0F;
+        globalUnitMode[sender-1] = mode;
 
-        globalBattery[sender - 1] = (buf[14] >> 4) & 0x0F;
-        uint8_t piggy = buf[14] & 0x0F;
+        if      (mode == 1) globalUnitStatus[sender-1] = (Team)status;
+        else if (mode == 2) globalUnitStatus[sender-1] = (status == 9) ? TEAM_PLANTED : TEAM_NEUTRAL;
+        else if (mode == 3) globalUnitStatus[sender-1] = (Team)status;
+        else                globalUnitStatus[sender-1] = TEAM_NEUTRAL;
+
+        globalBattery[sender-1] = (buf[22] >> 4) & 0x0F;
+        uint8_t piggy           =  buf[22]        & 0x0F;
 
         if (piggy != EVT_NONE) {
-            if (piggy == EVT_SECTOR_CAPTURED)
-                globalEventTime[sender - 1] = now;
-            else if (piggy == EVT_SECTOR_NEUTRAL)
-                globalEventTime[sender - 1] = 0;
-            else if (piggy == EVT_BOMB_ARMED || piggy == EVT_BOMB_DEFUSED || piggy == EVT_BOMB_EXPLODED)
-                globalEventTime[sender - 1] = now;
+            if      (piggy == EVT_SECTOR_CAPTURED) globalEventTime[sender-1] = now;
+            else if (piggy == EVT_SECTOR_NEUTRAL)  globalEventTime[sender-1] = 0;
+            else if (piggy == EVT_BOMB_ARMED ||
+                piggy == EVT_BOMB_DEFUSED ||
+                piggy == EVT_BOMB_EXPLODED)   globalEventTime[sender-1] = now;
         }
-
     } else if (pktType == PKT_URGENT) {
         uint8_t eType = (buf[5] >> 4) & 0x0F;
         uint8_t teamId = buf[5] & 0x0F;
@@ -619,13 +619,19 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         }
 
     } else if (pktType == PKT_EPOCH_SYNC) {
-        uint32_t masterSecond = (sender - 1) * 5;
-        syncEpochSeconds = masterSecond;
-        lastEpochTick = now;
+        uint32_t masterSecond    = (sender - 1) * 5;
+        syncEpochSeconds         = masterSecond;
+        lastEpochTick            = now;
         hasTransmittedThisMinute = false;
-        Serial.print("[LORA] EpochSync -> secunda ");
-        Serial.println(masterSecond);
 
+        uint32_t rxTime = ((uint32_t)buf[5] << 24) |
+        ((uint32_t)buf[6] << 16) |
+        ((uint32_t)buf[7] << 8)  |
+        buf[8];
+        if (isGameTimerRunning && rxTime > 0)
+            gameTimeLeftSeconds = rxTime;
+
+        Serial.print("[LORA] EpochSync -> secunda "); Serial.println(masterSecond);
     } else if (pktType == PKT_RESTART) {
         // Semnalam prin valoare speciala — .ino face restart-ul
         lastSeenTime[sender - 1] = 0xFFFFFFFF;
@@ -693,9 +699,9 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], uint8_t selectedMod
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
                 if      (pktType == PKT_SYNC)       rxLen = 44;
-                else if (pktType == PKT_HEARTBEAT)  rxLen = 16;
+                else if (pktType == PKT_HEARTBEAT)  rxLen = 24;
                 else if (pktType == PKT_START)      rxLen = 10;
-                else if (pktType == PKT_EPOCH_SYNC) rxLen = 6;
+                else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
                 else if (pktType == PKT_RESTART)    rxLen = 6;
                 else if (pktType == PKT_CONQUEST)   rxLen = 7;
             }
@@ -841,9 +847,9 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], uint8_t selectedMod
             hasTransmittedThisMinute = true;
 
             if (isMasterNode && epochSyncTimer > 0 &&
-                now - epochSyncTimer >= 18000000 &&
+                now - epochSyncTimer >= 180000 &&
                 pendingEventType == EVT_NONE) {
-                buildEpochSync();
+                buildEpochSync(gameTimeLeftSeconds);
                 } else {
                     buildHeartbeat(liveScore, teamKills, selectedMode,
                                    sectorOwner, isBombArmed, respawnTeam,

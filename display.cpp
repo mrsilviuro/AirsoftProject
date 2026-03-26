@@ -559,8 +559,11 @@ void drawPages(const PageContext& ctx) {
                     display.print("- ");
                 }
                 display.print(TEAM_NAMES[i]);
+                int32_t displayed = ctx.liveScore[i] -
+                ((int32_t)ctx.teamKills[i] * ctx.respawnPenaltyPoints);
+                if (displayed < 0) displayed = 0;
                 char ptsBuf[15];
-                snprintf(ptsBuf, sizeof(ptsBuf), "%d", ctx.liveScore[i]);
+                snprintf(ptsBuf, sizeof(ptsBuf), "%d", displayed);
                 uint8_t tw = strlen(ptsBuf) * 6;
                 uint8_t x = SCREEN_WIDTH - tw - 2 - 7;
                 display.setCursor(x, y);
@@ -590,7 +593,7 @@ void drawPages(const PageContext& ctx) {
                     display.print("- ");
                 }
                 display.print(TEAM_NAMES[i]);
-                uint32_t total = ctx.bankedKills[i];
+                uint32_t total = 0;
                 for (uint8_t u = 0; u < MAX_UNITS; u++) total += ctx.globalKills[u][i];
                 char kBuf[15];
                 if (ctx.teamMaxRespawns[i] > 0)

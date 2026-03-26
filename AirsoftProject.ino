@@ -107,6 +107,8 @@ uint8_t tagStatusMsg = 0;
 uint32_t tagStatusTime = 0;
 uint32_t tagWaitStart = 0;
 
+uint32_t lastTimerTick = 0;
+
 AdminContext buildAdminContext() {
     AdminContext ac;
     ac.selectedPage = adminSelectedPage;
@@ -299,12 +301,20 @@ void buildContext() {
 
     // Scoruri (placeholder)
     for (uint8_t i = 0; i < 4; i++) ctx.liveScore[i] = loraGetNetworkScore(i, liveScore[i]);
-    memset(ctx.bankedKills, 0, sizeof(ctx.bankedKills));
     memset(ctx.globalKills, 0, sizeof(ctx.globalKills));
+
+    // Unitatea locala
     ctx.globalKills[UNIT_ID - 1][0] = teamKills[0];
     ctx.globalKills[UNIT_ID - 1][1] = teamKills[1];
     ctx.globalKills[UNIT_ID - 1][2] = teamKills[2];
     ctx.globalKills[UNIT_ID - 1][3] = teamKills[3];
+
+    // Celelalte unitati din retea
+    for (uint8_t u = 0; u < MAX_UNITS; u++) {
+        if (u == UNIT_ID - 1) continue;
+        for (uint8_t t = 0; t < 4; t++)
+            ctx.globalKills[u][t] = globalKillsNet[u][t];
+    }
 
     // Datele unitatii locale — reale
     uint8_t myMode = 0;
@@ -480,6 +490,11 @@ void loop() {
     // LoRa update — receptie + TDMA + transmisii programate
     loraUpdate(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
 
+    if (loraStartJustSent) {
+        loraStartJustSent = false;
+        lastTimerTick = millis();  // ← resetam tick-ul
+    }
+
     if (loraSettingsReceived) {
         loraSettingsReceived = false;
 
@@ -554,7 +569,6 @@ void loop() {
 
     // Scadere timer joc
     if (isGameTimerRunning && gameTimeLeftSeconds > 0) {
-        static uint32_t lastTimerTick = 0;
         if (now - lastTimerTick >= 1000) {
             lastTimerTick = now;
             gameTimeLeftSeconds--;
@@ -687,7 +701,7 @@ void loop() {
             if (selectedMode == 0)
                 owner = sectorOwner;
             else if (selectedMode == 1 && isBombArmed)
-                owner = sectorOwner;
+                owner = bombOwner;
             else if (selectedMode == 2)
                 owner = respawnTeam;
 
@@ -1058,7 +1072,8 @@ void onShortPress(uint8_t btnIndex) {
 
     } else if (currentState == STATE_PAGES) {
         // GALBEN in modul Respawn — kill inainte de orice navigare
-        if (selectedMode == 2 && btnIndex == 3) {
+        if (selectedMode == 2 && btnIndex == 3 &&
+            !(currentPage == 5 && gameTimeLeftSeconds > 0 && !isGameTimerRunning)) {
             bool limitReached = (teamMaxRespawns[respawnTeam - 1] > 0 && teamKills[respawnTeam - 1] >= teamMaxRespawns[respawnTeam - 1]);
 
             if (!isTimeOut && !limitReached && queueCount < 100 && !(gameTimeLeftSeconds > 0 && !isGameTimerRunning)) {
@@ -1066,10 +1081,6 @@ void onShortPress(uint8_t btnIndex) {
                 queueTail = (queueTail + 1) % 100;
                 queueCount++;
                 teamKills[respawnTeam - 1]++;
-                if (respawnPenaltyPoints > 0 && liveScore[respawnTeam - 1] > 0) {
-                    int32_t deductie = (liveScore[respawnTeam - 1] < respawnPenaltyPoints) ? liveScore[respawnTeam - 1] : respawnPenaltyPoints;
-                    liveScore[respawnTeam - 1] -= deductie;
-                }
                 tone(PIN_BUZZER, 1200, 100);
                 needsDisplayUpdate = true;
                 Serial.print("[RESPAWN] Kill inregistrat. Queue: ");

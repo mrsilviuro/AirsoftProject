@@ -51,7 +51,6 @@ struct PageContext {
 
     // --- Scoruri ---
     int32_t liveScore[4];
-    uint32_t bankedKills[4];
     uint16_t globalKills[12][4];
 
     // --- Retea ---

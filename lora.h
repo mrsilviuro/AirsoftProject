@@ -68,6 +68,8 @@ extern uint8_t rx_bsExpPtsIdx, rx_bsDefPtsIdx;
 extern uint8_t rx_rsTimeIdx, rx_rsPenaltyIdx;
 extern uint8_t rx_rsLimitIdx[4];
 
+extern bool loraStartJustSent;
+
 // ============================================================
 // Initializare
 // ============================================================
