@@ -61,6 +61,13 @@ extern uint8_t  globalBattery[MAX_UNITS];
 extern uint8_t pendingEventType;
 extern uint8_t pendingEventTeam;
 
+extern bool    loraSettingsReceived;
+extern uint8_t rx_gsTimeLimit, rx_gsBonus, rx_gsWinCond;
+extern uint8_t rx_bsTimerIdx, rx_bsCooldownIdx;
+extern uint8_t rx_bsExpPtsIdx, rx_bsDefPtsIdx;
+extern uint8_t rx_rsTimeIdx, rx_rsPenaltyIdx;
+extern uint8_t rx_rsLimitIdx[4];
+
 // ============================================================
 // Initializare
 // ============================================================

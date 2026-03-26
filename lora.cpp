@@ -13,7 +13,7 @@ bool isNetworkSynced = false;
 bool isMasterNode = false;
 
 bool    loraSyncJustReceived = false;
-uint8_t loraSyncFromUnit     = 0;
+uint8_t loraSyncFromUnit     = 1; // ← 1 in loc de 0, evitam index -1
 
 uint32_t syncEpochSeconds = 0;
 uint32_t lastEpochTick = 0;
@@ -70,6 +70,13 @@ static int32_t s_scores[4];
 static uint16_t s_kills[4];
 static uint8_t s_urgentEvent, s_urgentTeam;
 static uint8_t s_conquestWinner = 0;
+
+bool    loraSettingsReceived = false;
+uint8_t rx_gsTimeLimit = 0, rx_gsBonus = 0, rx_gsWinCond = 0;
+uint8_t rx_bsTimerIdx = 0, rx_bsCooldownIdx = 0;
+uint8_t rx_bsExpPtsIdx = 0, rx_bsDefPtsIdx = 0;
+uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
+uint8_t rx_rsLimitIdx[4] = {0};
 
 // ============================================================
 // Helper — CRC
@@ -386,7 +393,8 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
 
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
-
+        isGameTimerRunning  = true;          // ← modifica variabila din .ino
+        gameTimeLeftSeconds = s_gameTimeLeft; // ← sincronizam cu ce am trimis
     } else if (txPktType == PKT_URGENT) {
         Serial.print("[LORA] Urgent trimis: ");
         Serial.println(s_urgentEvent);
@@ -447,50 +455,73 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         currentSyncID[2] = buf[7];
         currentSyncID[3] = '\0';
 
+        // Setari
+        rx_gsTimeLimit   = (buf[8]  >> 4) & 0x0F;
+        rx_gsBonus       =  buf[8]        & 0x0F;
+        rx_bsTimerIdx    = (buf[9]  >> 4) & 0x0F;
+        rx_bsCooldownIdx =  buf[9]        & 0x0F;
+        rx_bsExpPtsIdx   = (buf[10] >> 4) & 0x0F;
+        rx_bsDefPtsIdx   =  buf[10]       & 0x0F;
+        rx_rsTimeIdx     = (buf[11] >> 4) & 0x0F;
+        rx_rsPenaltyIdx  =  buf[11]       & 0x0F;
+        rx_rsLimitIdx[0] = (buf[12] >> 4) & 0x0F;
+        rx_rsLimitIdx[1] =  buf[12]       & 0x0F;
+        rx_rsLimitIdx[2] = (buf[13] >> 4) & 0x0F;
+        rx_rsLimitIdx[3] =  buf[13]       & 0x0F;
+        rx_gsWinCond     = (buf[14] >> 4) & 0x03;
+        loraSettingsReceived = true;
+
         // Flags
-        bool isRunning = (buf[14] & 0x80) != 0;
+        bool isRunning  = (buf[14] & 0x80) != 0;
         bool wasTimeOut = (buf[14] & 0x40) != 0;
 
         // Timp ramas
-        uint32_t timeLeft = ((uint32_t)buf[15] << 24) | ((uint32_t)buf[16] << 16) | ((uint32_t)buf[17] << 8) | buf[18];
+        uint32_t timeLeft = ((uint32_t)buf[15] << 24) |
+        ((uint32_t)buf[16] << 16) |
+        ((uint32_t)buf[17] << 8)  |
+        buf[18];
+
+        gameTimeLeftSeconds = timeLeft;
 
         // Puncte — regula "nu mai mic"
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 19 + i * 4;
-            int32_t rx = ((int32_t)(int8_t)buf[b] << 24) | ((int32_t)buf[b + 1] << 16) | ((int32_t)buf[b + 2] << 8) | buf[b + 3];
+            uint8_t b  = 19 + i * 4;
+            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
+            ((int32_t)buf[b+1] << 16) |
+            ((int32_t)buf[b+2] << 8)  |
+            buf[b+3];
             if (rx > liveScore[i]) liveScore[i] = rx;
         }
 
         // Killuri — regula "nu mai mic"
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 35 + i * 2;
-            uint16_t rx = ((uint16_t)buf[b] << 8) | buf[b + 1];
+            uint8_t  b  = 35 + i * 2;
+            uint16_t rx = ((uint16_t)buf[b] << 8) | buf[b+1];
             if (rx > teamKills[i]) teamKills[i] = rx;
         }
 
         if (isRunning) {
             isGameTimerRunning = true;
-            gameTimeLeftSeconds = timeLeft;
         } else if (wasTimeOut) {
-            isTimeOut = true;
+            isTimeOut          = true;
             isGameTimerRunning = false;
-            gameTimeLeftSeconds = 0;
+            gameTimeLeftSeconds = 0;     // ← doar la timeout resetam la 0
         }
 
         // Trailing Edge sync
-        syncReceivedTime = now;
-        isNetworkSynced = true;
-        isMasterNode = false;
+        syncReceivedTime         = now;
+        isNetworkSynced          = true;
+        isMasterNode             = false;
         hasTransmittedThisMinute = false;
-        finalHeartbeatSent = false;
-        syncEpochSeconds = 59;
-        lastEpochTick = now + 4000;
+        finalHeartbeatSent       = false;
+        syncEpochSeconds         = 59;
+        lastEpochTick            = now + 4000;
 
         loraSyncJustReceived = true;
         loraSyncFromUnit     = sender;
+
         Serial.print("[LORA] SYNC primit. SyncID: ");
         Serial.println(currentSyncID);
-
     } else if (pktType == PKT_START) {
         if (!isGameTimerRunning) {
             uint32_t timeLeft = ((uint32_t)buf[5] << 24) | ((uint32_t)buf[6] << 16) | ((uint32_t)buf[7] << 8) | buf[8];
@@ -793,12 +824,16 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], uint8_t selectedMod
         if (syncEpochSeconds == myStart && !hasTransmittedThisMinute) {
             hasTransmittedThisMinute = true;
 
-            if (isMasterNode && epochSyncTimer > 0 && now - epochSyncTimer >= 180000) {
+            if (isMasterNode && epochSyncTimer > 0 &&
+                now - epochSyncTimer >= 18000000 &&
+                pendingEventType == EVT_NONE) {
                 buildEpochSync();
-            } else {
-                buildHeartbeat(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent);
-                if (epochSyncTimer == 0) epochSyncTimer = now;
-            }
+                } else {
+                    buildHeartbeat(liveScore, teamKills, selectedMode,
+                                   sectorOwner, isBombArmed, respawnTeam,
+                                   batteryPercent);
+                    if (epochSyncTimer == 0) epochSyncTimer = now;
+                }
 
             if (txState == TX_IDLE) startTransmit();
 

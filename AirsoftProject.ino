@@ -480,11 +480,58 @@ void loop() {
     // LoRa update — receptie + TDMA + transmisii programate
     loraUpdate(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
 
+    if (loraSettingsReceived) {
+        loraSettingsReceived = false;
+
+        // Game Settings
+        gsTimeLimit         = rx_gsTimeLimit;
+        gsBonus             = rx_gsBonus;
+        gsWinCond           = rx_gsWinCond;
+            const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
+            bonusIntervalMinutes = bn[gsBonus];
+            currentWinCondition  = (WinCondition)gsWinCond;
+
+            // Bomb Settings
+            bsTimerIdx           = rx_bsTimerIdx;
+            bsCooldownIdx        = rx_bsCooldownIdx;
+            bsExpPtsIdx          = rx_bsExpPtsIdx;
+            bsDefPtsIdx          = rx_bsDefPtsIdx;
+            const uint32_t tv[]  = {5, 10, 15, 20, 30, 45, 60, 120};
+            const uint32_t pv[]  = {50, 100, 200, 300, 400, 500, 600, 700,
+                800, 900, 1000, 1500, 2000, 2500, 3000};
+                bombTimerMs          = tv[bsTimerIdx]   * 60000UL;
+                cooldownMs           = tv[bsCooldownIdx] * 60000UL;
+                bombPointsExplode    = pv[bsExpPtsIdx];
+                bombPointsDefuse     = pv[bsDefPtsIdx];
+
+                // Respawn Settings
+                rsTimeIdx            = rx_rsTimeIdx;
+                rsPenaltyIdx         = rx_rsPenaltyIdx;
+                for (uint8_t i = 0; i < 4; i++) rsLimitIdx[i] = rx_rsLimitIdx[i];
+                const uint32_t ts[]  = {10, 30, 60, 120, 180, 240, 300,
+                    600, 900, 1200, 1500, 1800};
+                    const uint16_t pp[]  = {0, 5, 10, 25, 50, 75, 100};
+                    const uint16_t lm[]  = {0, 10, 25, 50, 75, 100, 200, 300, 400, 500, 1000};
+                    respawnTimeMs        = ts[rsTimeIdx] * 1000UL;
+                    respawnPenaltyPoints = pp[rsPenaltyIdx];
+                    for (uint8_t i = 0; i < 4; i++)
+                        teamMaxRespawns[i] = lm[rsLimitIdx[i]];
+
+        needsDisplayUpdate = true;
+        Serial.println("[SYNC] Setari aplicate de la master.");
+    }
+
     if (loraSyncJustReceived) {
         loraSyncJustReceived = false;
         syncedScreenStart    = millis();
-        previousStateBeforeAdmin = currentState; // salvam starea curenta
-        currentState      = STATE_SYNC_RECEIVED;
+        // Salvam starea doar daca nu suntem deja in admin
+        if (currentState != STATE_ADMIN_MENU &&
+            currentState != STATE_ADMIN_PAGES &&
+            currentState != STATE_ADMIN_SYNC_WARN &&
+            currentState != STATE_SYNC_RECEIVED) {
+            previousStateBeforeAdmin = currentState;
+            }
+            currentState       = STATE_SYNCED_RECEIVED;
         needsDisplayUpdate = true;
         tone(PIN_BUZZER, 1500, 500);
     }
@@ -738,6 +785,17 @@ void loop() {
                 needsDisplayUpdate = false;
             }
             if (millis() - syncedScreenStart >= 2000) {
+                currentState = STATE_ADMIN_MENU;
+                needsDisplayUpdate = true;
+            }
+            break;
+
+        case STATE_SYNCED_RECEIVED:
+            if (needsDisplayUpdate) {
+                drawSyncedScreen(loraSyncFromUnit);
+                needsDisplayUpdate = false;
+            }
+            if (millis() - syncedScreenStart >= 2000) {
                 currentState = previousStateBeforeAdmin;
                 needsDisplayUpdate = true;
             }
@@ -823,7 +881,6 @@ void loop() {
 
                 if (rfid.result == RFID_READ_ADMIN) {
                     // START JOC!
-                    isGameTimerRunning = true;
                     loraSendStart(gameTimeLeftSeconds);
                     digitalWrite(PIN_RELAY, LOW);
                     isRelayActive = true;

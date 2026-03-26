@@ -112,7 +112,8 @@ enum GameState : uint8_t {
     STATE_SYNC_RECEIVED,
     STATE_WAIT_ADMIN_TAG,
     STATE_LOADING,
-    STATE_READY
+    STATE_READY,
+    STATE_SYNCED_RECEIVED
 };
 
 // ============================================================
