@@ -559,8 +559,10 @@ void drawPages(const PageContext& ctx) {
                     display.print("- ");
                 }
                 display.print(TEAM_NAMES[i]);
+                uint32_t totalKills = 0;
+                for (uint8_t u = 0; u < MAX_UNITS; u++) totalKills += ctx.globalKills[u][i];
                 int32_t displayed = ctx.liveScore[i] -
-                ((int32_t)ctx.teamKills[i] * ctx.respawnPenaltyPoints);
+                ((int32_t)ctx.globalKills[0][i] * ctx.respawnPenaltyPoints);
                 if (displayed < 0) displayed = 0;
                 char ptsBuf[15];
                 snprintf(ptsBuf, sizeof(ptsBuf), "%d", displayed);
@@ -593,8 +595,7 @@ void drawPages(const PageContext& ctx) {
                     display.print("- ");
                 }
                 display.print(TEAM_NAMES[i]);
-                uint32_t total = 0;
-                for (uint8_t u = 0; u < MAX_UNITS; u++) total += ctx.globalKills[u][i];
+                uint32_t total = ctx.globalKills[0][i];
                 char kBuf[15];
                 if (ctx.teamMaxRespawns[i] > 0)
                     snprintf(kBuf, sizeof(kBuf), "%u/%u", total, ctx.teamMaxRespawns[i]);

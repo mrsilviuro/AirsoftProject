@@ -21,8 +21,8 @@ uint32_t syncReceivedTime = 0;
 bool hasTransmittedThisMinute = false;
 bool finalHeartbeatSent = false;
 
-int32_t globalScores[MAX_UNITS][4] = {0};
-uint16_t globalKillsNet[MAX_UNITS][4] = {0};
+int32_t  loraRxScores[4] = {0};
+uint16_t loraRxKills[4]  = {0};
 uint8_t globalUnitMode[MAX_UNITS] = {0};
 Team globalUnitStatus[MAX_UNITS];
 uint32_t lastSeenTime[MAX_UNITS] = {0};
@@ -79,6 +79,10 @@ uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
 uint8_t rx_rsLimitIdx[4] = {0};
 
 bool loraStartJustSent = false;
+
+bool    loraSyncSent = false;
+int32_t loraSyncSentScores[4] = {0};
+uint16_t loraSyncSentKills[4] = {0};
 
 // ============================================================
 // Helper — CRC
@@ -385,17 +389,29 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         }
 
     } else if (txPktType == PKT_SYNC) {
-        Serial.print("[LORA] SYNC trimis. SyncID: ");
-        Serial.println(currentSyncID);
-        syncReceivedTime = now;
-        isNetworkSynced = true;
-        isMasterNode = true;
+        Serial.print("[LORA] SYNC trimis. SyncID: "); Serial.println(currentSyncID);
+        syncReceivedTime         = now;
+        isNetworkSynced          = true;
+        isMasterNode             = true;
         hasTransmittedThisMinute = false;
-        finalHeartbeatSent = false;
-        syncEpochSeconds = 59;
-        lastEpochTick = now + 4000;
+        finalHeartbeatSent       = false;
+        syncEpochSeconds         = 59;
+        lastEpochTick            = now + 4000;
         if (epochSyncTimer == 0) epochSyncTimer = now;
 
+        // Salvam totalurile trimise pentru a le aplica in .ino
+        for (uint8_t u = 0; u < MAX_UNITS; u++)
+            for (uint8_t t = 0; t < 4; t++) {
+                globalScores[u][t]   = 0;
+                globalKillsNet[u][t] = 0;
+            }
+
+        // Reset — heartbeat-urile repopuleaza de la zero
+        for (uint8_t u = 0; u < MAX_UNITS; u++)
+            for (uint8_t t = 0; t < 4; t++) {
+                globalScores[u][t]   = 0;
+                globalKillsNet[u][t] = 0;
+            }
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
         isGameTimerRunning  = true;
@@ -487,24 +503,26 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         ((uint32_t)buf[17] << 8)  |
         buf[18];
 
-        gameTimeLeftSeconds = timeLeft;
-
-        // Puncte — regula "nu mai mic"
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b  = 19 + i * 4;
+            uint8_t b = 19 + i * 4;
             int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
             ((int32_t)buf[b+1] << 16) |
             ((int32_t)buf[b+2] << 8)  |
             buf[b+3];
-            if (rx > liveScore[i]) liveScore[i] = rx;
+            if (rx > loraRxScores[i]) loraRxScores[i] = rx;
+        }
+        for (uint8_t i = 0; i < 4; i++) {
+            uint8_t b = 35 + i * 2;
+            uint16_t rx = ((uint16_t)buf[b] << 8) | buf[b+1];
+            if (rx > loraRxKills[i]) loraRxKills[i] = rx;
         }
 
-        // Killuri — regula "nu mai mic"
-        for (uint8_t i = 0; i < 4; i++) {
-            uint8_t  b  = 35 + i * 2;
-            uint16_t rx = ((uint16_t)buf[b] << 8) | buf[b+1];
-            if (rx > teamKills[i]) teamKills[i] = rx;
-        }
+        for (uint8_t u = 0; u < MAX_UNITS; u++)
+            for (uint8_t t = 0; t < 4; t++)
+                globalScores[u][t] = 0;
+        for (uint8_t u = 0; u < MAX_UNITS; u++)
+            for (uint8_t t = 0; t < 4; t++)
+                globalKillsNet[u][t] = 0;
 
         if (isRunning) {
             isGameTimerRunning  = true;
@@ -547,15 +565,11 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         // Scoruri
         for (uint8_t i = 0; i < 4; i++) {
             int16_t rx = (int16_t)(((uint16_t)buf[5 + i*2] << 8) | buf[6 + i*2]);
-            if ((int32_t)rx > globalScores[sender-1][i])
-                globalScores[sender-1][i] = rx;
+            if ((int32_t)rx > loraRxScores[i]) loraRxScores[i] = rx;
         }
-
-        // Killuri — regula "nu mai mic"
         for (uint8_t i = 0; i < 4; i++) {
             uint16_t rx = ((uint16_t)buf[13 + i*2] << 8) | buf[14 + i*2];
-            if (rx > globalKillsNet[sender-1][i])
-                globalKillsNet[sender-1][i] = rx;
+            if (rx > loraRxKills[i]) loraRxKills[i] = rx;
         }
 
         // Mode, status, battery, piggyback — acum la bytes 21-22
@@ -972,15 +986,6 @@ bool loraSendUrgent(uint8_t eventType, uint8_t teamId) {
     buildUrgent(eventType, teamId);
     startTransmit();
     return true;
-}
-
-int32_t loraGetNetworkScore(uint8_t teamIdx, int32_t localScore) {
-    int32_t total = localScore;
-    for (uint8_t u = 0; u < MAX_UNITS; u++) {
-        if (u == UNIT_ID - 1) continue;
-        if (globalScores[u][teamIdx] > 0) total += globalScores[u][teamIdx];
-    }
-    return total;
 }
 
 bool loraRestartPending() {

@@ -49,8 +49,8 @@ extern bool     hasTransmittedThisMinute;
 extern bool     finalHeartbeatSent;
 
 // Date retea (populate din heartbeat-uri)
-extern int32_t  globalScores[MAX_UNITS][4];  // Punctele raportate de fiecare unitate
-extern uint16_t globalKillsNet[MAX_UNITS][4];
+extern int32_t  loraRxScores[4];
+extern uint16_t loraRxKills[4];
 extern uint8_t  globalUnitMode[MAX_UNITS];
 extern Team     globalUnitStatus[MAX_UNITS];
 extern uint32_t lastSeenTime[MAX_UNITS];
@@ -133,8 +133,6 @@ void loraSendRestart();
 // Conquest victory
 void loraSendConquest(uint8_t winnerTeam);
 
-// ============================================================
-// Helper — calculeaza scorul total al retelei per echipa
-// Aplica regula "nu mai mic" la receptie
-// ============================================================
-int32_t loraGetNetworkScore(uint8_t teamIdx, int32_t localScore);
+extern bool    loraSyncSent;
+extern int32_t loraSyncSentScores[4];
+extern uint16_t loraSyncSentKills[4];

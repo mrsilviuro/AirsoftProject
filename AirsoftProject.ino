@@ -300,21 +300,11 @@ void buildContext() {
     memcpy(ctx.teamKills, teamKills, sizeof(teamKills));
 
     // Scoruri (placeholder)
-    for (uint8_t i = 0; i < 4; i++) ctx.liveScore[i] = loraGetNetworkScore(i, liveScore[i]);
+    for (uint8_t i = 0; i < 4; i++)
+        ctx.liveScore[i] = liveScore[i];
     memset(ctx.globalKills, 0, sizeof(ctx.globalKills));
-
-    // Unitatea locala
-    ctx.globalKills[UNIT_ID - 1][0] = teamKills[0];
-    ctx.globalKills[UNIT_ID - 1][1] = teamKills[1];
-    ctx.globalKills[UNIT_ID - 1][2] = teamKills[2];
-    ctx.globalKills[UNIT_ID - 1][3] = teamKills[3];
-
-    // Celelalte unitati din retea
-    for (uint8_t u = 0; u < MAX_UNITS; u++) {
-        if (u == UNIT_ID - 1) continue;
-        for (uint8_t t = 0; t < 4; t++)
-            ctx.globalKills[u][t] = globalKillsNet[u][t];
-    }
+    for (uint8_t i = 0; i < 4; i++)
+        ctx.globalKills[0][i] = teamKills[i];
 
     // Datele unitatii locale — reale
     uint8_t myMode = 0;
@@ -489,6 +479,13 @@ void loop() {
     uint32_t now = millis();
     // LoRa update — receptie + TDMA + transmisii programate
     loraUpdate(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
+
+    for (uint8_t i = 0; i < 4; i++) {
+        if (loraRxScores[i] > liveScore[i])
+            liveScore[i] = loraRxScores[i];
+        if (loraRxKills[i] > teamKills[i])
+            teamKills[i] = loraRxKills[i];
+    }
 
     if (loraStartJustSent) {
         loraStartJustSent = false;
@@ -1317,7 +1314,18 @@ void onShortPress(uint8_t btnIndex) {
             currentState = STATE_ADMIN_MENU;
             needsDisplayUpdate = true;
         } else if (btnIndex == 1) {
-            // BLUE — trimitem sync
+            // Calculam totalurile retelei pentru sync
+            int32_t networkScores[4];
+            uint16_t networkKills[4];
+            for (uint8_t i = 0; i < 4; i++) {
+                networkScores[i] = loraGetNetworkScore(i, liveScore[i]);
+                networkKills[i] = teamKills[i];
+                for (uint8_t u = 0; u < MAX_UNITS; u++) {
+                    if (u == UNIT_ID - 1) continue;
+                    networkKills[i] += globalKillsNet[u][i];
+                }
+            }
+
             loraSendSync(
                 gsTimeLimit, gsBonus, gsWinCond,
                 bsTimerIdx, bsCooldownIdx,
@@ -1326,7 +1334,8 @@ void onShortPress(uint8_t btnIndex) {
                 rsLimitIdx,
                 isGameTimerRunning, isTimeOut,
                 gameTimeLeftSeconds,
-                liveScore, teamKills
+                networkScores,  // ← totaluri retea
+                networkKills    // ← totaluri retea
             );
             syncingStartTime = millis();
             currentState = STATE_SYNC_RECEIVED;
