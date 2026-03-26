@@ -51,6 +51,7 @@ extern bool     finalHeartbeatSent;
 // Date retea (populate din heartbeat-uri)
 extern int32_t  loraRxScores[4];
 extern uint16_t loraRxKills[4];
+extern int32_t  loraRxPenalties[4];
 extern uint8_t  globalUnitMode[MAX_UNITS];
 extern Team     globalUnitStatus[MAX_UNITS];
 extern uint32_t lastSeenTime[MAX_UNITS];

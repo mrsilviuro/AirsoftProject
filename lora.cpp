@@ -198,12 +198,9 @@ static void buildHeartbeat(
 
     // Penalizari aplicate int32_t x4
     for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 21 + i*4;
-        int32_t p = appliedPenalties[i];
-        txBuf[b]   = (p >> 24) & 0xFF;
-        txBuf[b+1] = (p >> 16) & 0xFF;
-        txBuf[b+2] = (p >> 8)  & 0xFF;
-        txBuf[b+3] =  p        & 0xFF;
+        int16_t p = (int16_t)min(appliedPenalties[i], (int32_t)32767);
+        txBuf[21 + i*2]     = (p >> 8) & 0xFF;
+        txBuf[21 + i*2 + 1] =  p       & 0xFF;
     }
 
     // Mode si status
@@ -558,16 +555,12 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             if (rx > loraRxKills[i]) loraRxKills[i] = rx;
         }
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 21 + i*4;
-            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
-            ((int32_t)buf[b+1] << 16) |
-            ((int32_t)buf[b+2] << 8)  |
-            buf[b+3];
-            if (rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
+            int16_t rx = (int16_t)(((uint16_t)buf[21 + i*2] << 8) | buf[22 + i*2]);
+            if ((int32_t)rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
         }
 
         uint8_t mode   = (buf[29] >> 4) & 0x0F;
-        uint8_t status =  buf[29]        & 0x0F;
+        uint8_t status =  buf[37]        & 0x0F;
         globalUnitMode[sender-1] = mode;
         if      (mode == 1) globalUnitStatus[sender-1] = (Team)status;
         else if (mode == 2) globalUnitStatus[sender-1] = (status == 9) ? TEAM_PLANTED : TEAM_NEUTRAL;
@@ -575,7 +568,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         else                globalUnitStatus[sender-1] = TEAM_NEUTRAL;
 
         globalBattery[sender-1] = (buf[30] >> 4) & 0x0F;
-        uint8_t piggy           =  buf[30]        & 0x0F;
+        uint8_t piggy           =  buf[38]        & 0x0F;
         if (piggy != EVT_NONE) {
             if      (piggy == EVT_SECTOR_CAPTURED) globalEventTime[sender-1] = now;
             else if (piggy == EVT_SECTOR_NEUTRAL)  globalEventTime[sender-1] = 0;
