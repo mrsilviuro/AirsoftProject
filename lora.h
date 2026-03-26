@@ -38,6 +38,9 @@ extern char    currentSyncID[4];   // Parola sesiunii curente
 extern bool    isNetworkSynced;    // True dupa primul sync
 extern bool    isMasterNode;       // True daca aceasta unitate a facut sync-ul
 
+extern bool    loraSyncJustReceived;
+extern uint8_t loraSyncFromUnit;
+
 // TDMA
 extern uint32_t syncEpochSeconds;  // Secunda curenta in ciclul de 60s
 extern uint32_t lastEpochTick;     // Millis la ultima bataie a ceasului

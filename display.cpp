@@ -1196,3 +1196,22 @@ void drawReadyScreen(int8_t selectedMode) {
 
     display.display();
 }
+
+void drawSyncedScreen(uint8_t fromUnitId) {
+    display.clearDisplay();
+    display.setTextSize(2);
+
+    const char* l1 = "SYNCED!";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 12)) / 2;
+    display.setCursor(x, 14);
+    display.print(l1);
+
+    display.setTextSize(1);
+    char buf[25];
+    snprintf(buf, sizeof(buf), "by unit %s", UNIT_NAMES[fromUnitId - 1]);
+    x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
+    display.setCursor(x, 44);
+    display.print(buf);
+
+    display.display();
+}

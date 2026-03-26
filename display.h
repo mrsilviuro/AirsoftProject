@@ -108,6 +108,7 @@ void drawActionScreen(ActionType actionType, uint8_t teamIndex, uint32_t elapsed
 // Ecran SUCCESS (afisat 3 secunde dupa o actiune reusita)
 // ============================================================
 void drawSuccessScreen();
+void drawSyncedScreen(uint8_t fromUnitId);
 
 // ============================================================
 // Ecran BOOOM! (afisat 3 secunde dupa o actiune reusita)

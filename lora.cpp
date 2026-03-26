@@ -12,6 +12,9 @@ char currentSyncID[4] = "---";
 bool isNetworkSynced = false;
 bool isMasterNode = false;
 
+bool    loraSyncJustReceived = false;
+uint8_t loraSyncFromUnit     = 0;
+
 uint32_t syncEpochSeconds = 0;
 uint32_t lastEpochTick = 0;
 uint32_t syncReceivedTime = 0;
@@ -205,6 +208,30 @@ static void buildHeartbeat(int32_t liveScore[4], uint16_t teamKills[4], uint8_t 
     txPktType = PKT_HEARTBEAT;
 }
 
+static void printTimingSuffix() {
+    if (!isNetworkSynced || millis() < lastEpochTick) {
+        Serial.println();
+        return;
+    }
+
+    uint32_t now       = millis();
+    uint32_t msInCycle = (syncEpochSeconds * 1000) + (now - lastEpochTick);
+    uint32_t cycleS    = (msInCycle / 1000) % 60;
+    uint32_t cycleMs   = msInCycle % 1000;
+
+    uint32_t elapsed   = now - syncReceivedTime;
+    uint32_t elM       = elapsed / 60000;
+    uint32_t elS       = (elapsed % 60000) / 1000;
+    uint32_t elMs      = elapsed % 1000;
+
+    Serial.print(" / Epoch: ");
+    Serial.print(cycleS); Serial.print("s ");
+    Serial.print(cycleMs); Serial.print("ms / Sync: ");
+    if (elM > 0) { Serial.print(elM); Serial.print("min "); }
+    Serial.print(elS); Serial.print("sec ");
+    Serial.print(elMs); Serial.println("ms");
+}
+
 static void buildSync() {
     memset(txBuf, 0, 44);
     txBuf[0] = NETWORK_ID[0];
@@ -336,8 +363,8 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
     lastSeenTime[UNIT_ID - 1] = now;
 
     if (txPktType == PKT_HEARTBEAT) {
-        Serial.print("[LORA] Heartbeat transmis. Unit ");
-        Serial.println(UNIT_ID);
+        Serial.print("[LORA] Heartbeat transmis. Unit "); Serial.print(UNIT_ID);
+        printTimingSuffix();
         if (pendingEventType != EVT_NONE) {
             Serial.print("[LORA] Piggyback livrat: ");
             Serial.println(pendingEventType);
@@ -407,10 +434,9 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         return;
     }
 
-    Serial.print("[LORA] Pachet 0x0");
-    Serial.print(pktType, HEX);
-    Serial.print(" Unit ");
-    Serial.println(sender);
+    Serial.print("[LORA] Pachet 0x0"); Serial.print(pktType, HEX);
+    Serial.print(" Unit "); Serial.print(sender);
+    printTimingSuffix();
 
     uint32_t now = millis();
     lastSeenTime[sender - 1] = now;
@@ -460,7 +486,8 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         syncEpochSeconds = 59;
         lastEpochTick = now + 4000;
 
-        tone(PIN_BUZZER, 1000, 100);
+        loraSyncJustReceived = true;
+        loraSyncFromUnit     = sender;
         Serial.print("[LORA] SYNC primit. SyncID: ");
         Serial.println(currentSyncID);
 
@@ -593,47 +620,57 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], uint8_t selectedMod
     uint32_t now = millis();
 
     // --------------------------------------------------------
-    // 1. RECEPTIE
+    // 1. RECEPTIE — masina de stari
     // --------------------------------------------------------
-    while (LoRaSerial.available() > 0 && LoRaSerial.peek() != (byte)NETWORK_ID[0]) {
+    static byte     rxBuf[44]  = {0};
+    static uint8_t  rxLen      = 0;   // cati bytes asteptam
+    static uint8_t  rxCount    = 0;   // cati bytes am primit
+    static uint32_t rxStart    = 0;   // cand a inceput receptia
+
+    // Aruncam bytes invalizi pana la NetworkID[0]
+    while (LoRaSerial.available() > 0 &&
+        rxCount == 0 &&
+        LoRaSerial.peek() != (byte)NETWORK_ID[0]) {
         LoRaSerial.read();
-    }
-
-    if (LoRaSerial.available() >= 6) {
-        byte header[4];
-        LoRaSerial.readBytes(header, 4);
-
-        uint8_t pktType = header[3];
-        uint8_t pktLen = 7;
-
-        if (pktType == PKT_SYNC)
-            pktLen = 44;
-        else if (pktType == PKT_HEARTBEAT)
-            pktLen = 16;
-        else if (pktType == PKT_START)
-            pktLen = 10;
-        else if (pktType == PKT_EPOCH_SYNC)
-            pktLen = 6;
-        else if (pktType == PKT_RESTART)
-            pktLen = 6;
-        else if (pktType == PKT_CONQUEST)
-            pktLen = 7;
-
-        uint8_t remaining = pktLen - 4;
-
-        if (LoRaSerial.available() >= remaining) {
-            byte buf[44] = {0};
-            buf[0] = header[0];
-            buf[1] = header[1];
-            buf[2] = header[2];
-            buf[3] = header[3];
-            LoRaSerial.readBytes(buf + 4, remaining);
-
-            processPacket(buf, pktLen, liveScore, teamKills, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
-        } else {
-            Serial.println("[LORA] Pachet incomplet, ignorat.");
         }
-    }
+
+        // Citim ce avem disponibil in buffer
+        while (LoRaSerial.available() > 0 && rxCount < 44) {
+            rxBuf[rxCount++] = LoRaSerial.read();
+
+            // Dupa primul byte, initializam timerul
+            if (rxCount == 1) rxStart = now;
+
+            // Dupa 4 bytes stim tipul si lungimea asteptata
+            if (rxCount == 4) {
+                uint8_t pktType = rxBuf[3];
+                rxLen = 7; // default urgent
+                if      (pktType == PKT_SYNC)       rxLen = 44;
+                else if (pktType == PKT_HEARTBEAT)  rxLen = 16;
+                else if (pktType == PKT_START)      rxLen = 10;
+                else if (pktType == PKT_EPOCH_SYNC) rxLen = 6;
+                else if (pktType == PKT_RESTART)    rxLen = 6;
+                else if (pktType == PKT_CONQUEST)   rxLen = 7;
+            }
+
+            // Am primit pachetul complet?
+            if (rxCount >= 4 && rxCount == rxLen) {
+                processPacket(rxBuf, rxLen,
+                              liveScore, teamKills,
+                              isTimeOut, isGameTimerRunning,
+                              gameTimeLeftSeconds);
+                rxCount = 0;
+                rxLen   = 0;
+                break;
+            }
+        }
+
+        // Timeout receptie — daca nu soseste pachetul complet in 200ms, aruncam
+        if (rxCount > 0 && now - rxStart > 200) {
+            Serial.print("[LORA] RX Timeout dupa "); Serial.print(rxCount); Serial.println(" bytes.");
+            rxCount = 0;
+            rxLen   = 0;
+        }
 
     // --------------------------------------------------------
     // 2. MASINA DE STARI TRANSMISIE

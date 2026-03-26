@@ -92,6 +92,7 @@ uint32_t adminSavedTime = 0;
 GameState previousStateBeforeAdmin = STATE_MENU;
 static uint32_t lastRfidRead = 0;
 uint32_t syncingStartTime = 0;
+uint32_t syncedScreenStart = 0;
 
 // Indecsi setari
 uint8_t gsIndex = 0, gsWinCond = 0, gsTimeLimit = 0, gsBonus = 2;
@@ -315,7 +316,7 @@ void buildContext() {
         myMode = 3;
 
     ctx.globalUnitMode[UNIT_ID - 1] = myMode;
-    ctx.lastSeenTime[UNIT_ID - 1] = millis();
+    ctx.lastSeenTime[UNIT_ID - 1] = lastSeenTime[UNIT_ID - 1]; // ← din lora.cpp
 
     if (myMode == 1) {
         ctx.globalUnitStatus[UNIT_ID - 1] = sectorOwner;
@@ -478,6 +479,15 @@ void loop() {
     uint32_t now = millis();
     // LoRa update — receptie + TDMA + transmisii programate
     loraUpdate(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
+
+    if (loraSyncJustReceived) {
+        loraSyncJustReceived = false;
+        syncedScreenStart    = millis();
+        previousStateBeforeAdmin = currentState; // salvam starea curenta
+        currentState      = STATE_SYNC_RECEIVED;
+        needsDisplayUpdate = true;
+        tone(PIN_BUZZER, 1500, 500);
+    }
 
     // Restart global primit prin LoRa
     if (loraRestartPending()) {
@@ -723,9 +733,12 @@ void loop() {
             break;
 
         case STATE_SYNC_RECEIVED:
-            drawSyncingScreen();
-            if (millis() - syncingStartTime >= 2000) {
-                currentState = STATE_ADMIN_MENU;
+            if (needsDisplayUpdate) {
+                drawSyncedScreen(loraSyncFromUnit);
+                needsDisplayUpdate = false;
+            }
+            if (millis() - syncedScreenStart >= 2000) {
+                currentState = previousStateBeforeAdmin;
                 needsDisplayUpdate = true;
             }
             break;
