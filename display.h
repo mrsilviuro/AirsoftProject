@@ -25,6 +25,7 @@ struct PageContext {
     WinCondition winCondition;
     bool isGameTimerRunning;
     uint32_t gameTimeLeftSeconds;
+    int32_t appliedPenalties[4];
 
     // --- Sector ---
     Team sectorOwner;

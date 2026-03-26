@@ -109,6 +109,8 @@ uint32_t tagWaitStart = 0;
 
 uint32_t lastTimerTick = 0;
 
+int32_t appliedPenalties[4] = {0, 0, 0, 0};
+
 AdminContext buildAdminContext() {
     AdminContext ac;
     ac.selectedPage = adminSelectedPage;
@@ -305,6 +307,8 @@ void buildContext() {
     memset(ctx.globalKills, 0, sizeof(ctx.globalKills));
     for (uint8_t i = 0; i < 4; i++)
         ctx.globalKills[0][i] = teamKills[i];
+    for (uint8_t i = 0; i < 4; i++)
+        ctx.appliedPenalties[i] = appliedPenalties[i];
 
     // Datele unitatii locale — reale
     uint8_t myMode = 0;
@@ -478,13 +482,21 @@ void setup() {
 void loop() {
     uint32_t now = millis();
     // LoRa update — receptie + TDMA + transmisii programate
-    loraUpdate(liveScore, teamKills, selectedMode, sectorOwner, isBombArmed, respawnTeam, batteryPercent, isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
+    loraUpdate(liveScore, teamKills, appliedPenalties,
+               selectedMode, sectorOwner, isBombArmed,
+               respawnTeam, batteryPercent,
+               isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
 
     for (uint8_t i = 0; i < 4; i++) {
         if (loraRxScores[i] > liveScore[i])
             liveScore[i] = loraRxScores[i];
         if (loraRxKills[i] > teamKills[i])
             teamKills[i] = loraRxKills[i];
+    }
+
+    for (uint8_t i = 0; i < 4; i++) {
+        if (loraRxPenalties[i] > appliedPenalties[i])
+            appliedPenalties[i] = loraRxPenalties[i];
     }
 
     if (loraStartJustSent) {
@@ -1078,6 +1090,13 @@ void onShortPress(uint8_t btnIndex) {
                 queueTail = (queueTail + 1) % 100;
                 queueCount++;
                 teamKills[respawnTeam - 1]++;
+                int32_t penalizare = min((int32_t)respawnPenaltyPoints,
+                                         liveScore[respawnTeam - 1] - appliedPenalties[respawnTeam - 1]);
+                if (penalizare > 0) appliedPenalties[respawnTeam - 1] += penalizare;
+                if (respawnPenaltyPoints > 0) {
+                    int32_t deductie = min((int32_t)respawnPenaltyPoints, liveScore[respawnTeam - 1]);
+                    liveScore[respawnTeam - 1] -= deductie;
+                }
                 tone(PIN_BUZZER, 1200, 100);
                 needsDisplayUpdate = true;
                 Serial.print("[RESPAWN] Kill inregistrat. Queue: ");
@@ -1314,18 +1333,6 @@ void onShortPress(uint8_t btnIndex) {
             currentState = STATE_ADMIN_MENU;
             needsDisplayUpdate = true;
         } else if (btnIndex == 1) {
-            // Calculam totalurile retelei pentru sync
-            int32_t networkScores[4];
-            uint16_t networkKills[4];
-            for (uint8_t i = 0; i < 4; i++) {
-                networkScores[i] = loraGetNetworkScore(i, liveScore[i]);
-                networkKills[i] = teamKills[i];
-                for (uint8_t u = 0; u < MAX_UNITS; u++) {
-                    if (u == UNIT_ID - 1) continue;
-                    networkKills[i] += globalKillsNet[u][i];
-                }
-            }
-
             loraSendSync(
                 gsTimeLimit, gsBonus, gsWinCond,
                 bsTimerIdx, bsCooldownIdx,
@@ -1334,8 +1341,8 @@ void onShortPress(uint8_t btnIndex) {
                 rsLimitIdx,
                 isGameTimerRunning, isTimeOut,
                 gameTimeLeftSeconds,
-                networkScores,  // ← totaluri retea
-                networkKills    // ← totaluri retea
+                liveScore,   // ← direct, loraRxScores deja inclus
+                teamKills    // ← direct, loraRxKills deja inclus
             );
             syncingStartTime = millis();
             currentState = STATE_SYNC_RECEIVED;

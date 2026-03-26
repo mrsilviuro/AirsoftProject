@@ -82,6 +82,7 @@ void loraInit();
 void loraUpdate(
     int32_t  liveScore[4],
     uint16_t teamKills[4],
+    int32_t  appliedPenalties[4],  // ← nou
     uint8_t  selectedMode,
     Team     sectorOwner,
     bool     isBombArmed,
@@ -133,6 +134,4 @@ void loraSendRestart();
 // Conquest victory
 void loraSendConquest(uint8_t winnerTeam);
 
-extern bool    loraSyncSent;
-extern int32_t loraSyncSentScores[4];
-extern uint16_t loraSyncSentKills[4];
+extern int32_t loraRxPenalties[4];
