@@ -109,7 +109,7 @@ void loraSendSync(
     uint8_t  rsLimitIdx[4],
     bool     isRunning,   bool isTimeOut,
     uint32_t gameTimeLeft,
-    int32_t  scores[4],   uint16_t kills[4]
+    int32_t  scores[4],   uint16_t kills[4], int32_t  penalties[4]
 );
 
 // Returneaza true daca am primit comanda de restart global

@@ -41,7 +41,7 @@ static TxState txState = TX_IDLE;
 static uint32_t txStateStart = 0;
 static uint32_t txTimeout = 3000;
 
-static byte txBuf[44] = {0};
+static byte txBuf[52] = {0};
 static uint8_t txLen = 0;
 static uint8_t txPktType = 0;
 
@@ -70,6 +70,7 @@ static int32_t s_scores[4];
 static uint16_t s_kills[4];
 static uint8_t s_urgentEvent, s_urgentTeam;
 static uint8_t s_conquestWinner = 0;
+static int32_t s_penalties[4] = {0};
 
 bool    loraSettingsReceived = false;
 uint8_t rx_gsTimeLimit = 0, rx_gsBonus = 0, rx_gsWinCond = 0;
@@ -252,7 +253,7 @@ static void printTimingSuffix() {
 }
 
 static void buildSync() {
-    memset(txBuf, 0, 44);
+    memset(txBuf, 0, 52);
     txBuf[0] = NETWORK_ID[0];
     txBuf[1] = NETWORK_ID[1];
     txBuf[2] = NETWORK_ID[2];
@@ -294,8 +295,14 @@ static void buildSync() {
         txBuf[b + 1] = s_kills[i] & 0xFF;
     }
 
-    txBuf[43] = calcCRC(txBuf, 43, true);
-    txLen = 44;
+    // Penalizari aplicate int16_t x4
+    for (uint8_t i = 0; i < 4; i++) {
+        int16_t p = (int16_t)min(s_penalties[i], (int32_t)32767);
+        txBuf[43 + i*2]     = (p >> 8) & 0xFF;
+        txBuf[43 + i*2 + 1] =  p       & 0xFF;
+    }
+    txBuf[51] = calcCRC(txBuf, 51, true);
+    txLen     = 52;
     txPktType = PKT_SYNC;
 }
 
@@ -508,6 +515,11 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             if (rx > loraRxKills[i]) loraRxKills[i] = rx;
         }
 
+        for (uint8_t i = 0; i < 4; i++) {
+            int16_t rx = (int16_t)(((uint16_t)buf[43 + i*2] << 8) | buf[44 + i*2]);
+            if ((int32_t)rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
+        }
+
         if (isRunning) {
             isGameTimerRunning  = true;
             gameTimeLeftSeconds = timeLeft;
@@ -560,7 +572,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         }
 
         uint8_t mode   = (buf[29] >> 4) & 0x0F;
-        uint8_t status =  buf[37]        & 0x0F;
+        uint8_t status =  buf[29]        & 0x0F;
         globalUnitMode[sender-1] = mode;
         if      (mode == 1) globalUnitStatus[sender-1] = (Team)status;
         else if (mode == 2) globalUnitStatus[sender-1] = (status == 9) ? TEAM_PLANTED : TEAM_NEUTRAL;
@@ -568,7 +580,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         else                globalUnitStatus[sender-1] = TEAM_NEUTRAL;
 
         globalBattery[sender-1] = (buf[30] >> 4) & 0x0F;
-        uint8_t piggy           =  buf[38]        & 0x0F;
+        uint8_t piggy           =  buf[30]        & 0x0F;
         if (piggy != EVT_NONE) {
             if      (piggy == EVT_SECTOR_CAPTURED) globalEventTime[sender-1] = now;
             else if (piggy == EVT_SECTOR_NEUTRAL)  globalEventTime[sender-1] = 0;
@@ -673,7 +685,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
     // --------------------------------------------------------
     // 1. RECEPTIE — masina de stari
     // --------------------------------------------------------
-    static byte     rxBuf[44]  = {0};
+    static byte     rxBuf[52]  = {0};
     static uint8_t  rxLen      = 0;   // cati bytes asteptam
     static uint8_t  rxCount    = 0;   // cati bytes am primit
     static uint32_t rxStart    = 0;   // cand a inceput receptia
@@ -686,7 +698,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
         }
 
         // Citim ce avem disponibil in buffer
-        while (LoRaSerial.available() > 0 && rxCount < 44) {
+        while (LoRaSerial.available() > 0 && rxCount < 52) {
             rxBuf[rxCount++] = LoRaSerial.read();
 
             // Dupa primul byte, initializam timerul
@@ -696,7 +708,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             if (rxCount == 4) {
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
-                if      (pktType == PKT_SYNC)       rxLen = 44;
+                if      (pktType == PKT_SYNC)       rxLen = 52;
                 else if (pktType == PKT_HEARTBEAT)  rxLen = 32;
                 else if (pktType == PKT_START)      rxLen = 10;
                 else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
@@ -717,8 +729,13 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
         }
 
         // Timeout receptie — daca nu soseste pachetul complet in 200ms, aruncam
-        if (rxCount > 0 && now - rxStart > 200) {
-            Serial.print("[LORA] RX Timeout dupa "); Serial.print(rxCount); Serial.println(" bytes.");
+        if (rxCount > 0 && now - rxStart > 500) {
+            Serial.print("[LORA] RX Timeout dupa ");
+            Serial.print(rxCount);
+            Serial.print(" bytes. rxLen=");
+            Serial.print(rxLen);
+            Serial.print(" pktType=0x");
+            Serial.println(rxBuf[3], HEX);
             rxCount = 0;
             rxLen   = 0;
         }
@@ -867,12 +884,14 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
 // ============================================================
 // API public
 // ============================================================
-void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4]) {
+void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t  penalties[4]) {
     const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
     currentSyncID[3] = '\0';
     Serial.print("[LORA] Nou SyncID: ");
     Serial.println(currentSyncID);
+
+    for (uint8_t i = 0; i < 4; i++) s_penalties[i] = penalties[i];
 
     s_gsTimeLimit = gsTimeLimit;
     s_gsBonus = gsBonus;

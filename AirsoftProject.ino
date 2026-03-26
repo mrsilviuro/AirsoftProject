@@ -1337,8 +1337,9 @@ void onShortPress(uint8_t btnIndex) {
                 rsLimitIdx,
                 isGameTimerRunning, isTimeOut,
                 gameTimeLeftSeconds,
-                liveScore,   // ← direct, loraRxScores deja inclus
-                teamKills    // ← direct, loraRxKills deja inclus
+                liveScore,
+                teamKills,
+                appliedPenalties  // ← nou
             );
             syncingStartTime = millis();
             currentState = STATE_SYNC_RECEIVED;
