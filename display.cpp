@@ -559,8 +559,6 @@ void drawPages(const PageContext& ctx) {
                     display.print("- ");
                 }
                 display.print(TEAM_NAMES[i]);
-                uint32_t totalKills = 0;
-                for (uint8_t u = 0; u < MAX_UNITS; u++) totalKills += ctx.globalKills[u][i];
                 int32_t displayed = ctx.liveScore[i] - ctx.appliedPenalties[i];
                 if (displayed < 0) displayed = 0;
                 char ptsBuf[15];

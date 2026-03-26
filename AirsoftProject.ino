@@ -1093,10 +1093,6 @@ void onShortPress(uint8_t btnIndex) {
                 int32_t penalizare = min((int32_t)respawnPenaltyPoints,
                                          liveScore[respawnTeam - 1] - appliedPenalties[respawnTeam - 1]);
                 if (penalizare > 0) appliedPenalties[respawnTeam - 1] += penalizare;
-                if (respawnPenaltyPoints > 0) {
-                    int32_t deductie = min((int32_t)respawnPenaltyPoints, liveScore[respawnTeam - 1]);
-                    liveScore[respawnTeam - 1] -= deductie;
-                }
                 tone(PIN_BUZZER, 1200, 100);
                 needsDisplayUpdate = true;
                 Serial.print("[RESPAWN] Kill inregistrat. Queue: ");
