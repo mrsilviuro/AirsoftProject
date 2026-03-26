@@ -506,6 +506,8 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             isTimeOut          = true;
             isGameTimerRunning = false;
             gameTimeLeftSeconds = 0;     // ← doar la timeout resetam la 0
+        } else {
+            gameTimeLeftSeconds = timeLeft;
         }
 
         // Trailing Edge sync
