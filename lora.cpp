@@ -892,7 +892,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             hasTransmittedThisMinute = true;
 
             if (isMasterNode && epochSyncTimer > 0 &&
-                now - epochSyncTimer >= 180000 &&
+                now - epochSyncTimer >= 18000000 &&
                 pendingEventType == EVT_NONE) {
                 buildEpochSync(gameTimeLeftSeconds);
                 } else {
@@ -957,8 +957,8 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
 }
 
 void loraSendStart(uint32_t gameTimeLeftSeconds) {
-    s_gameTimeLeft = gameTimeLeftSeconds > 1 ? gameTimeLeftSeconds - 1 : gameTimeLeftSeconds;
-    buildStart(s_gameTimeLeft);
+    s_gameTimeLeft = gameTimeLeftSeconds;  // fara -1
+    buildStart(gameTimeLeftSeconds);
     if (!inSafeWindow() || txState != TX_IDLE) {
         jitterPktType = PKT_START;
         jitterDelay = smartJitter(500);

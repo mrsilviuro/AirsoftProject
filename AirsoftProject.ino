@@ -112,6 +112,7 @@ uint32_t tagWaitStart = 0;
 uint32_t lastTimerTick = 0;
 
 int32_t appliedPenalties[4] = {0, 0, 0, 0};
+uint32_t loraStartPendingTime = 0;
 
 AdminContext buildAdminContext() {
     AdminContext ac;
@@ -509,13 +510,20 @@ void loop() {
     }
 
     if (loraStartJustSent) {
-        loraStartJustSent    = false;
-        isGameTimerRunning   = true;
-        gameTimeLeftSeconds  = loraStartGameTimeLeft;
-        lastTimerTick        = millis();
+        loraStartJustSent   = false;
+        // Asteptam cat dureaza receptia pe celelalte unitati
+        // La SF9, 48 bytes ≈ 340ms — nu folosim delay() deci folosim un flag cu timestamp
+        loraStartPendingTime = millis() + 400;  // ← 400ms delay
+    }
+
+    if (loraStartPendingTime > 0 && millis() >= loraStartPendingTime) {
+        loraStartPendingTime = 0;
+        isGameTimerRunning  = true;
+        gameTimeLeftSeconds = loraStartGameTimeLeft;
+        lastTimerTick       = millis();
         digitalWrite(PIN_RELAY, LOW);
-        isRelayActive        = true;
-        relayTurnOffTime     = millis() + 5000;
+        isRelayActive       = true;
+        relayTurnOffTime    = millis() + 5000;
     }
 
     if (loraSettingsReceived) {
@@ -593,7 +601,7 @@ void loop() {
     // Scadere timer joc
     if (isGameTimerRunning && gameTimeLeftSeconds > 0) {
         if (now - lastTimerTick >= 1000) {
-            lastTimerTick = now;
+            lastTimerTick += 1000;
             gameTimeLeftSeconds--;
             if (gameTimeLeftSeconds == 0) {
                 isGameTimerRunning = false;
