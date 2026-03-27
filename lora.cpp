@@ -41,7 +41,7 @@ static TxState txState = TX_IDLE;
 static uint32_t txStateStart = 0;
 static uint32_t txTimeout = 3000;
 
-static byte txBuf[52] = {0};
+static byte txBuf[60] = {0};
 static uint8_t txLen = 0;
 static uint8_t txPktType = 0;
 
@@ -81,6 +81,8 @@ uint8_t rx_rsLimitIdx[4] = {0};
 
 bool loraStartJustSent = false;
 int32_t loraRxPenalties[4] = {0};
+bool loraSyncTimerReset = false;
+uint32_t loraStartGameTimeLeft = 0;
 
 // ============================================================
 // Helper — CRC
@@ -296,14 +298,16 @@ static void buildSync() {
         txBuf[b + 1] = s_kills[i] & 0xFF;
     }
 
-    // Penalizari aplicate int16_t x4
+    // Penalizari aplicate int32_t x4
     for (uint8_t i = 0; i < 4; i++) {
-        int16_t p = (int16_t)min(s_penalties[i], (int32_t)32767);
-        txBuf[43 + i*2]     = (p >> 8) & 0xFF;
-        txBuf[43 + i*2 + 1] =  p       & 0xFF;
+        uint8_t b = 43 + i*4;
+        txBuf[b]   = (s_penalties[i] >> 24) & 0xFF;
+        txBuf[b+1] = (s_penalties[i] >> 16) & 0xFF;
+        txBuf[b+2] = (s_penalties[i] >> 8)  & 0xFF;
+        txBuf[b+3] =  s_penalties[i]        & 0xFF;
     }
-    txBuf[51] = calcCRC(txBuf, 51, true);
-    txLen     = 52;
+    txBuf[59] = calcCRC(txBuf, 59, true);
+    txLen     = 60;
     txPktType = PKT_SYNC;
 }
 
@@ -411,11 +415,11 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         syncEpochSeconds         = 59;
         lastEpochTick            = now + 4000;
         if (epochSyncTimer == 0) epochSyncTimer = now;
+        loraSyncTimerReset = true;
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
-        isGameTimerRunning  = true;
-        gameTimeLeftSeconds = s_gameTimeLeft;
-        loraStartJustSent   = true;  // ← flag pentru reset tick
+        loraStartGameTimeLeft = s_gameTimeLeft;
+        loraStartJustSent     = true;
     } else if (txPktType == PKT_URGENT) {
         Serial.print("[LORA] Urgent trimis: ");
         Serial.println(s_urgentEvent);
@@ -426,7 +430,7 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         lastEpochTick = now;
         epochSyncTimer = now;
         hasTransmittedThisMinute = true;
-
+        loraSyncTimerReset = true;
     } else if (txPktType == PKT_CONQUEST || txPktType == PKT_RESTART) {
         if (retxCount < retxMax) {
             retxCount++;
@@ -517,8 +521,12 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         }
 
         for (uint8_t i = 0; i < 4; i++) {
-            int16_t rx = (int16_t)(((uint16_t)buf[43 + i*2] << 8) | buf[44 + i*2]);
-            if ((int32_t)rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
+            uint8_t b = 43 + i*4;
+            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
+            ((int32_t)buf[b+1] << 16) |
+            ((int32_t)buf[b+2] << 8)  |
+            buf[b+3];
+            if (rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
         }
 
         if (isRunning) {
@@ -550,15 +558,14 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         Serial.println(currentSyncID);
     } else if (pktType == PKT_START) {
         if (!isGameTimerRunning) {
-            uint32_t timeLeft = ((uint32_t)buf[5] << 24) | ((uint32_t)buf[6] << 16) | ((uint32_t)buf[7] << 8) | buf[8];
-            isGameTimerRunning = true;
-            gameTimeLeftSeconds = timeLeft;
-            loraStartJustSent   = true;
+            uint32_t timeLeft = ((uint32_t)buf[5] << 24) | ((uint32_t)buf[6] << 16) |
+            ((uint32_t)buf[7] << 8) | buf[8];
+            loraStartGameTimeLeft = timeLeft;  // ← adauga asta
+            loraStartJustSent     = true;
             tone(PIN_BUZZER, 1500, 500);
             Serial.println("[LORA] START primit!");
         }
-
-    } else if (pktType == PKT_HEARTBEAT) {
+    }else if (pktType == PKT_HEARTBEAT) {
         // Scoruri int32_t
         for (uint8_t i = 0; i < 4; i++) {
             uint8_t b = 5 + i*4;
@@ -708,7 +715,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
     // --------------------------------------------------------
     // 1. RECEPTIE — masina de stari
     // --------------------------------------------------------
-    static byte     rxBuf[52]  = {0};
+    static byte     rxBuf[60]  = {0};
     static uint8_t  rxLen      = 0;   // cati bytes asteptam
     static uint8_t  rxCount    = 0;   // cati bytes am primit
     static uint32_t rxStart    = 0;   // cand a inceput receptia
@@ -721,7 +728,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
         }
 
         // Citim ce avem disponibil in buffer
-        while (LoRaSerial.available() > 0 && rxCount < 52) {
+        while (LoRaSerial.available() > 0 && rxCount < 60) {
             rxBuf[rxCount++] = LoRaSerial.read();
 
             // Dupa primul byte, initializam timerul
@@ -731,7 +738,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             if (rxCount == 4) {
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
-                if      (pktType == PKT_SYNC)       rxLen = 52;
+                if      (pktType == PKT_SYNC)       rxLen = 60;
                 else if (pktType == PKT_HEARTBEAT)  rxLen = 48;
                 else if (pktType == PKT_START)      rxLen = 10;
                 else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
@@ -950,8 +957,8 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
 }
 
 void loraSendStart(uint32_t gameTimeLeftSeconds) {
-    s_gameTimeLeft = gameTimeLeftSeconds;
-    buildStart(gameTimeLeftSeconds);
+    s_gameTimeLeft = gameTimeLeftSeconds > 1 ? gameTimeLeftSeconds - 1 : gameTimeLeftSeconds;
+    buildStart(s_gameTimeLeft);
     if (!inSafeWindow() || txState != TX_IDLE) {
         jitterPktType = PKT_START;
         jitterDelay = smartJitter(500);

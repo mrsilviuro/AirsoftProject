@@ -136,3 +136,5 @@ void loraSendRestart();
 void loraSendConquest(uint8_t winnerTeam);
 
 extern int32_t loraRxPenalties[4];
+extern bool loraSyncTimerReset;
+extern uint32_t loraStartGameTimeLeft;

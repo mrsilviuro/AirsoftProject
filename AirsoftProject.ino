@@ -503,9 +503,19 @@ void loop() {
             appliedPenalties[i] = loraRxPenalties[i];
     }
 
+    if (loraSyncTimerReset) {
+        loraSyncTimerReset = false;
+        lastTimerTick = millis();  // ← doar reset tick, fara releu
+    }
+
     if (loraStartJustSent) {
-        loraStartJustSent = false;
-        lastTimerTick = millis();  // ← resetam tick-ul
+        loraStartJustSent    = false;
+        isGameTimerRunning   = true;
+        gameTimeLeftSeconds  = loraStartGameTimeLeft;
+        lastTimerTick        = millis();
+        digitalWrite(PIN_RELAY, LOW);
+        isRelayActive        = true;
+        relayTurnOffTime     = millis() + 5000;
     }
 
     if (loraSettingsReceived) {
@@ -1340,10 +1350,10 @@ void onShortPress(uint8_t btnIndex) {
                 rsTimeIdx, rsPenaltyIdx,
                 rsLimitIdx,
                 isGameTimerRunning, isTimeOut,
-                gameTimeLeftSeconds,
+                gameTimeLeftSeconds > 1 ? gameTimeLeftSeconds - 1 : gameTimeLeftSeconds,  // ← compensare
                 liveScore,
                 teamKills,
-                appliedPenalties  // ← nou
+                appliedPenalties
             );
             syncingStartTime = millis();
             currentState = STATE_SYNC_RECEIVED;
