@@ -281,11 +281,14 @@ static void buildSync() {
 
     txBuf[15] = (s_gameTimeLeft >> 24) & 0xFF;
     txBuf[16] = (s_gameTimeLeft >> 16) & 0xFF;
-    txBuf[17] = (s_gameTimeLeft >> 8) & 0xFF;
-    txBuf[18] = s_gameTimeLeft & 0xFF;
+    txBuf[17] = (s_gameTimeLeft >> 8)  & 0xFF;
+    txBuf[18] =  s_gameTimeLeft        & 0xFF;
+    uint16_t msUntilNext = (uint16_t)(1000 - (millis() - s_lastTimerTick));
+    txBuf[19] = (msUntilNext >> 8) & 0xFF;
+    txBuf[20] =  msUntilNext       & 0xFF;
 
     for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 19 + i * 4;
+        uint8_t b = 21 + i * 4;
         txBuf[b] = (s_scores[i] >> 24) & 0xFF;
         txBuf[b + 1] = (s_scores[i] >> 16) & 0xFF;
         txBuf[b + 2] = (s_scores[i] >> 8) & 0xFF;
@@ -293,21 +296,21 @@ static void buildSync() {
     }
 
     for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 35 + i * 2;
+        uint8_t b = 37 + i * 2;
         txBuf[b] = (s_kills[i] >> 8) & 0xFF;
         txBuf[b + 1] = s_kills[i] & 0xFF;
     }
 
     // Penalizari aplicate int32_t x4
     for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 43 + i*4;
+        uint8_t b = 45 + i*4;
         txBuf[b]   = (s_penalties[i] >> 24) & 0xFF;
         txBuf[b+1] = (s_penalties[i] >> 16) & 0xFF;
         txBuf[b+2] = (s_penalties[i] >> 8)  & 0xFF;
         txBuf[b+3] =  s_penalties[i]        & 0xFF;
     }
-    txBuf[59] = calcCRC(txBuf, 59, true);
-    txLen     = 60;
+    txBuf[61] = calcCRC(txBuf, 59, true);
+    txLen     = 62;
     txPktType = PKT_SYNC;
 }
 
@@ -507,7 +510,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         buf[18];
 
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 19 + i * 4;
+            uint8_t b = 21 + i * 4;
             int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
             ((int32_t)buf[b+1] << 16) |
             ((int32_t)buf[b+2] << 8)  |
@@ -515,13 +518,13 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             if (rx > loraRxScores[i]) loraRxScores[i] = rx;
         }
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 35 + i * 2;
+            uint8_t b = 37 + i * 2;
             uint16_t rx = ((uint16_t)buf[b] << 8) | buf[b+1];
             if (rx > loraRxKills[i]) loraRxKills[i] = rx;
         }
 
         for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 43 + i*4;
+            uint8_t b = 45 + i*4;
             int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
             ((int32_t)buf[b+1] << 16) |
             ((int32_t)buf[b+2] << 8)  |
@@ -553,6 +556,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
 
         loraSyncJustReceived = true;
         loraSyncFromUnit     = sender;
+        loraSyncTimerReset = true;
 
         Serial.print("[LORA] SYNC primit. SyncID: ");
         Serial.println(currentSyncID);
@@ -915,6 +919,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
 // API public
 // ============================================================
 void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t  penalties[4]) {
+
     const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
     currentSyncID[3] = '\0';

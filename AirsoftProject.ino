@@ -300,7 +300,7 @@ void buildContext() {
     ctx.queueCount = queueCount;
     ctx.queueHead = queueHead;
     ctx.respawnPenaltyPoints = respawnPenaltyPoints;
-    memcpy(ctx.respawnQueue, respawnQueue, sizeof(respawnQueue));
+    ctx.respawnQueue[0] = respawnQueue[queueHead];
     memcpy(ctx.teamMaxRespawns, teamMaxRespawns, sizeof(teamMaxRespawns));
     memcpy(ctx.teamKills, teamKills, sizeof(teamKills));
 
@@ -516,17 +516,21 @@ void loop() {
         loraStartPendingTime = millis() + 400;  // ← 400ms delay
     }
 
-   if (loraStartPendingTime > 0 && millis() >= loraStartPendingTime) {
-    loraStartPendingTime = 0;
-    if (loraStartGameTimeLeft > 0) {  // ← verificam ca avem timp valid
-        isGameTimerRunning  = true;
-        gameTimeLeftSeconds = loraStartGameTimeLeft;
-        lastTimerTick       = millis();
-        digitalWrite(PIN_RELAY, LOW);
-        isRelayActive       = true;
-        relayTurnOffTime    = millis() + 5000;
+    if (loraStartPendingTime > 0 && millis() >= loraStartPendingTime) {
+        loraStartPendingTime = 0;
+        Serial.print("[START] loraStartGameTimeLeft=");
+        Serial.println(loraStartGameTimeLeft);
+        Serial.print("[START] gameTimeLeftSeconds=");
+        Serial.println(gameTimeLeftSeconds);
+        if (loraStartGameTimeLeft > 0) {
+            isGameTimerRunning  = true;
+            gameTimeLeftSeconds = loraStartGameTimeLeft;
+            lastTimerTick       = millis();
+            digitalWrite(PIN_RELAY, LOW);
+            isRelayActive       = true;
+            relayTurnOffTime    = millis() + 5000;
+        }
     }
-}
 
     if (loraSettingsReceived) {
         loraSettingsReceived = false;
@@ -600,12 +604,23 @@ void loop() {
     }
     static bool isBombBeeping = false;
 
+    static bool wasGameTimerRunning = false;
+    if (isGameTimerRunning && !wasGameTimerRunning) {
+        lastTimerTick = millis();
+    }
+    wasGameTimerRunning = isGameTimerRunning;
+
+    if (isGameTimerRunning && (now - lastTimerTick > 2000)) {
+        lastTimerTick = now - 1000;
+    }
+
     // Scadere timer joc
     if (isGameTimerRunning && gameTimeLeftSeconds > 0) {
         if (now - lastTimerTick >= 1000) {
             lastTimerTick += 1000;
             gameTimeLeftSeconds--;
             if (gameTimeLeftSeconds == 0) {
+                Serial.println("[TIMEOUT] gameTimeLeftSeconds ajuns la 0!");
                 isGameTimerRunning = false;
                 isTimeOut = true;
                 digitalWrite(PIN_RELAY, LOW);
@@ -635,6 +650,10 @@ void loop() {
     if (!isDimmed && (now - lastActivityTime >= 15000)) {
         isDimmed = true;
         setBrightness(10);  // ~10%
+    }
+
+    if (selectedMode == 0 && sectorOwner != TEAM_NEUTRAL && lastPointTick == 0) {
+        lastPointTick = now;
     }
 
     // Generare puncte sector (la 10 secunde)
