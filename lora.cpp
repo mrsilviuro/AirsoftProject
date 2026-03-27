@@ -41,7 +41,7 @@ static TxState txState = TX_IDLE;
 static uint32_t txStateStart = 0;
 static uint32_t txTimeout = 3000;
 
-static byte txBuf[60] = {0};
+static byte txBuf[62] = {0};
 static uint8_t txLen = 0;
 static uint8_t txPktType = 0;
 
@@ -71,6 +71,7 @@ static uint16_t s_kills[4];
 static uint8_t s_urgentEvent, s_urgentTeam;
 static uint8_t s_conquestWinner = 0;
 static int32_t s_penalties[4] = {0};
+static uint32_t s_lastTimerTick = 0;
 
 bool    loraSettingsReceived = false;
 uint8_t rx_gsTimeLimit = 0, rx_gsBonus = 0, rx_gsWinCond = 0;
@@ -83,6 +84,8 @@ bool loraStartJustSent = false;
 int32_t loraRxPenalties[4] = {0};
 bool loraSyncTimerReset = false;
 uint32_t loraStartGameTimeLeft = 0;
+
+void loraSendSync(..., int32_t penalties[4], uint32_t lastTimerTick);
 
 // ============================================================
 // Helper — CRC
@@ -309,7 +312,7 @@ static void buildSync() {
         txBuf[b+2] = (s_penalties[i] >> 8)  & 0xFF;
         txBuf[b+3] =  s_penalties[i]        & 0xFF;
     }
-    txBuf[61] = calcCRC(txBuf, 59, true);
+    txBuf[61] = calcCRC(txBuf, 61, true);
     txLen     = 62;
     txPktType = PKT_SYNC;
 }
@@ -532,9 +535,13 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             if (rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
         }
 
+        uint16_t msUntilNext = ((uint16_t)buf[19] << 8) | buf[20];
+        if (msUntilNext > 1000) msUntilNext = 1000;
         if (isRunning) {
             isGameTimerRunning  = true;
             gameTimeLeftSeconds = timeLeft;
+            lastTimerTick       = millis() - (1000 - msUntilNext);
+            loraSyncTimerReset  = false;
         } else if (wasTimeOut) {
             isTimeOut           = true;
             isGameTimerRunning  = false;
@@ -719,7 +726,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
     // --------------------------------------------------------
     // 1. RECEPTIE — masina de stari
     // --------------------------------------------------------
-    static byte     rxBuf[60]  = {0};
+    static byte rxBuf[62] = {0};
     static uint8_t  rxLen      = 0;   // cati bytes asteptam
     static uint8_t  rxCount    = 0;   // cati bytes am primit
     static uint32_t rxStart    = 0;   // cand a inceput receptia
@@ -732,7 +739,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
         }
 
         // Citim ce avem disponibil in buffer
-        while (LoRaSerial.available() > 0 && rxCount < 60) {
+        while (LoRaSerial.available() > 0 && rxCount < 62) {
             rxBuf[rxCount++] = LoRaSerial.read();
 
             // Dupa primul byte, initializam timerul
@@ -742,7 +749,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             if (rxCount == 4) {
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
-                if      (pktType == PKT_SYNC)       rxLen = 60;
+                if      (pktType == PKT_SYNC)       rxLen = 62;
                 else if (pktType == PKT_HEARTBEAT)  rxLen = 48;
                 else if (pktType == PKT_START)      rxLen = 10;
                 else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
@@ -941,6 +948,7 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
     s_isRunning = isRunning;
     s_isTimeOut = isOver;
     s_gameTimeLeft = gameTimeLeft;
+    s_lastTimerTick = lastTimerTick;
     for (uint8_t i = 0; i < 4; i++) {
         s_scores[i] = scores[i];
         s_kills[i] = kills[i];

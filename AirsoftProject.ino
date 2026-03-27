@@ -1452,3 +1452,5 @@ void onAdminCombo() {
     needsDisplayUpdate = true;
     Serial.println("[ADMIN] Intram in Admin Mode.");
 }
+
+loraSendSync(..., appliedPenalties, lastTimerTick);
