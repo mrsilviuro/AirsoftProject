@@ -181,27 +181,28 @@ static void buildHeartbeat(
     txBuf[3] = PKT_HEARTBEAT;
     txBuf[4] = UNIT_ID;
 
-    // Scoruri int16_t x4
+    // Scoruri int32_t x4
     for (uint8_t i = 0; i < 4; i++) {
-        int32_t score = liveScore[i];
-        if (score >  32767) score =  32767;
-        if (score < -32768) score = -32768;
-        int16_t s16 = (int16_t)score;
-        txBuf[5 + i*2]     = (s16 >> 8) & 0xFF;
-        txBuf[5 + i*2 + 1] =  s16 & 0xFF;
+        uint8_t b = 5 + i*4;
+        txBuf[b]   = (liveScore[i] >> 24) & 0xFF;
+        txBuf[b+1] = (liveScore[i] >> 16) & 0xFF;
+        txBuf[b+2] = (liveScore[i] >> 8)  & 0xFF;
+        txBuf[b+3] =  liveScore[i]        & 0xFF;
     }
 
     // Killuri uint16_t x4
     for (uint8_t i = 0; i < 4; i++) {
-        txBuf[13 + i*2]     = (teamKills[i] >> 8) & 0xFF;
-        txBuf[13 + i*2 + 1] =  teamKills[i] & 0xFF;
+        txBuf[21 + i*2]     = (teamKills[i] >> 8) & 0xFF;
+        txBuf[21 + i*2 + 1] =  teamKills[i]       & 0xFF;
     }
 
-    // Penalizari aplicate int32_t x4
+    // Penalizari int32_t x4
     for (uint8_t i = 0; i < 4; i++) {
-        int16_t p = (int16_t)min(appliedPenalties[i], (int32_t)32767);
-        txBuf[21 + i*2]     = (p >> 8) & 0xFF;
-        txBuf[21 + i*2 + 1] =  p       & 0xFF;
+        uint8_t b = 29 + i*4;
+        txBuf[b]   = (appliedPenalties[i] >> 24) & 0xFF;
+        txBuf[b+1] = (appliedPenalties[i] >> 16) & 0xFF;
+        txBuf[b+2] = (appliedPenalties[i] >> 8)  & 0xFF;
+        txBuf[b+3] =  appliedPenalties[i]        & 0xFF;
     }
 
     // Mode si status
@@ -221,10 +222,10 @@ static void buildHeartbeat(
     else if (batteryPercent >= 40) batLvl = 2;
     else if (batteryPercent >= 20) batLvl = 1;
 
-    txBuf[29] = ((mode   & 0x0F) << 4) | (status & 0x0F);
-    txBuf[30] = ((batLvl & 0x0F) << 4) | (pendingEventType & 0x0F);
-    txBuf[31] = calcCRC(txBuf, 31, true);
-    txLen     = 32;
+    txBuf[45] = ((mode   & 0x0F) << 4) | (status & 0x0F);
+    txBuf[46] = ((batLvl & 0x0F) << 4) | (pendingEventType & 0x0F);
+    txBuf[47] = calcCRC(txBuf, 47, true);
+    txLen     = 48;
     txPktType = PKT_HEARTBEAT;
     }
 
@@ -558,35 +559,55 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         }
 
     } else if (pktType == PKT_HEARTBEAT) {
+        // Scoruri int32_t
         for (uint8_t i = 0; i < 4; i++) {
-            int16_t rx = (int16_t)(((uint16_t)buf[5 + i*2] << 8) | buf[6 + i*2]);
-            if ((int32_t)rx > loraRxScores[i]) loraRxScores[i] = rx;
-        }
-        for (uint8_t i = 0; i < 4; i++) {
-            uint16_t rx = ((uint16_t)buf[13 + i*2] << 8) | buf[14 + i*2];
-            if (rx > loraRxKills[i]) loraRxKills[i] = rx;
-        }
-        for (uint8_t i = 0; i < 4; i++) {
-            int16_t rx = (int16_t)(((uint16_t)buf[21 + i*2] << 8) | buf[22 + i*2]);
-            if ((int32_t)rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
+            uint8_t b = 5 + i*4;
+            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
+            ((int32_t)buf[b+1] << 16) |
+            ((int32_t)buf[b+2] << 8)  |
+            buf[b+3];
+            if (rx > loraRxScores[i]) loraRxScores[i] = rx;
         }
 
-        uint8_t mode   = (buf[29] >> 4) & 0x0F;
-        uint8_t status =  buf[29]        & 0x0F;
+        // Killuri uint16_t
+        for (uint8_t i = 0; i < 4; i++) {
+            uint16_t rx = ((uint16_t)buf[21 + i*2] << 8) | buf[22 + i*2];
+            if (rx > loraRxKills[i]) loraRxKills[i] = rx;
+        }
+
+        // Penalizari int32_t
+        for (uint8_t i = 0; i < 4; i++) {
+            uint8_t b = 29 + i*4;
+            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
+            ((int32_t)buf[b+1] << 16) |
+            ((int32_t)buf[b+2] << 8)  |
+            buf[b+3];
+            if (rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
+        }
+
+        uint8_t mode   = (buf[45] >> 4) & 0x0F;
+        uint8_t status =  buf[45]       & 0x0F;
         globalUnitMode[sender-1] = mode;
         if      (mode == 1) globalUnitStatus[sender-1] = (Team)status;
         else if (mode == 2) globalUnitStatus[sender-1] = (status == 9) ? TEAM_PLANTED : TEAM_NEUTRAL;
         else if (mode == 3) globalUnitStatus[sender-1] = (Team)status;
         else                globalUnitStatus[sender-1] = TEAM_NEUTRAL;
 
-        globalBattery[sender-1] = (buf[30] >> 4) & 0x0F;
-        uint8_t piggy           =  buf[30]        & 0x0F;
+        globalBattery[sender-1] = (buf[46] >> 4) & 0x0F;
+        uint8_t piggy           =  buf[46]       & 0x0F;
         if (piggy != EVT_NONE) {
-            if      (piggy == EVT_SECTOR_CAPTURED) globalEventTime[sender-1] = now;
-            else if (piggy == EVT_SECTOR_NEUTRAL)  globalEventTime[sender-1] = 0;
-            else if (piggy == EVT_BOMB_ARMED ||
-                piggy == EVT_BOMB_DEFUSED ||
-                piggy == EVT_BOMB_EXPLODED)   globalEventTime[sender-1] = now;
+            if (piggy == EVT_SECTOR_CAPTURED)
+                globalEventTime[sender-1] = now;
+            else if (piggy == EVT_SECTOR_NEUTRAL)
+                globalEventTime[sender-1] = 0;
+            else if (piggy == EVT_BOMB_ARMED) {
+                if (globalUnitStatus[sender-1] != TEAM_PLANTED)
+                    globalEventTime[sender-1] = now;
+            }
+            else if (piggy == EVT_BOMB_DEFUSED || piggy == EVT_BOMB_EXPLODED) {
+                if (globalUnitStatus[sender-1] == TEAM_PLANTED)
+                    globalEventTime[sender-1] = now;
+            }
         }
     } else if (pktType == PKT_URGENT) {
         uint8_t eType = (buf[5] >> 4) & 0x0F;
@@ -607,12 +628,14 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
             globalEventTime[sender - 1] = 0;
         } else if (eType == EVT_BOMB_ARMED) {
-            globalUnitStatus[sender - 1] = TEAM_PLANTED;
-            globalEventTime[sender - 1] = now;
-            globalUnitMode[sender - 1] = 2;
+            if (globalUnitStatus[sender-1] != TEAM_PLANTED)
+                globalEventTime[sender-1] = now;
+            globalUnitStatus[sender-1] = TEAM_PLANTED;
+            globalUnitMode[sender-1] = 2;
         } else if (eType == EVT_BOMB_DEFUSED || eType == EVT_BOMB_EXPLODED) {
-            globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
-            globalEventTime[sender - 1] = now;
+            if (globalUnitStatus[sender-1] == TEAM_PLANTED)
+                globalEventTime[sender-1] = now;
+            globalUnitStatus[sender-1] = TEAM_NEUTRAL;
         } else if (eType == EVT_MODE_SECTOR) {
             globalUnitMode[sender - 1] = 1;
             globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
@@ -709,7 +732,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
                 if      (pktType == PKT_SYNC)       rxLen = 52;
-                else if (pktType == PKT_HEARTBEAT)  rxLen = 32;
+                else if (pktType == PKT_HEARTBEAT)  rxLen = 48;
                 else if (pktType == PKT_START)      rxLen = 10;
                 else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
                 else if (pktType == PKT_RESTART)    rxLen = 6;

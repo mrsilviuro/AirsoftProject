@@ -562,7 +562,7 @@ void drawPages(const PageContext& ctx) {
                 int32_t displayed = ctx.liveScore[i] - ctx.appliedPenalties[i];
                 if (displayed < 0) displayed = 0;
                 char ptsBuf[15];
-                snprintf(ptsBuf, sizeof(ptsBuf), "%d", displayed);
+                snprintf(ptsBuf, sizeof(ptsBuf), "%ld", displayed);
                 uint8_t tw = strlen(ptsBuf) * 6;
                 uint8_t x = SCREEN_WIDTH - tw - 2 - 7;
                 display.setCursor(x, y);

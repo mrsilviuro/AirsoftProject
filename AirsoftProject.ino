@@ -3,6 +3,8 @@
 #include "display.h"
 #include "lora.h"
 #include "rfid.h"
+#include <esp_wifi.h>
+#include <esp_bt.h>
 
 // ============================================================
 // Starea masinii de stari
@@ -457,6 +459,8 @@ void syncAdminIndices() {
 // setup()
 // ============================================================
 void setup() {
+    esp_wifi_stop();
+    esp_bt_controller_disable();
     Serial.begin(115200);
 
     for (uint8_t i = 0; i < 4; i++) {
