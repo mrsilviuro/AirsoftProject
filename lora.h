@@ -109,7 +109,8 @@ void loraSendSync(
     uint8_t  rsLimitIdx[4],
     bool     isRunning,   bool isTimeOut,
     uint32_t gameTimeLeft,
-    int32_t  scores[4],   uint16_t kills[4], int32_t  penalties[4]
+    int32_t  scores[4],   uint16_t kills[4], int32_t penalties[4],
+    uint32_t lastTimerTick  // ← adauga doar asta
 );
 
 // Returneaza true daca am primit comanda de restart global
@@ -138,4 +139,5 @@ void loraSendConquest(uint8_t winnerTeam);
 extern int32_t loraRxPenalties[4];
 extern bool loraSyncTimerReset;
 extern uint32_t loraStartGameTimeLeft;
-void loraSendSync(..., int32_t penalties[4], uint32_t lastTimerTick);
+extern uint32_t loraRxTimerTick;
+extern uint32_t loraMasterTimerTick;

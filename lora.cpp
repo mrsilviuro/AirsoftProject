@@ -84,8 +84,8 @@ bool loraStartJustSent = false;
 int32_t loraRxPenalties[4] = {0};
 bool loraSyncTimerReset = false;
 uint32_t loraStartGameTimeLeft = 0;
-
-void loraSendSync(..., int32_t penalties[4], uint32_t lastTimerTick);
+uint32_t loraRxTimerTick = 0;
+uint32_t loraMasterTimerTick = 0;
 
 // ============================================================
 // Helper — CRC
@@ -282,11 +282,11 @@ static void buildSync() {
     flags |= (s_gsWinCond & 0x03) << 4;
     txBuf[14] = flags;
 
-    txBuf[15] = (s_gameTimeLeft >> 24) & 0xFF;
+     txBuf[15] = (s_gameTimeLeft >> 24) & 0xFF;
     txBuf[16] = (s_gameTimeLeft >> 16) & 0xFF;
     txBuf[17] = (s_gameTimeLeft >> 8)  & 0xFF;
     txBuf[18] =  s_gameTimeLeft        & 0xFF;
-    uint16_t msUntilNext = (uint16_t)(1000 - (millis() - s_lastTimerTick));
+    uint16_t msUntilNext = (uint16_t)(1000 - (millis() - s_lastTimerTick));  // ← millis() acum, la momentul transmisiei!
     txBuf[19] = (msUntilNext >> 8) & 0xFF;
     txBuf[20] =  msUntilNext       & 0xFF;
 
@@ -421,6 +421,7 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         syncEpochSeconds         = 59;
         lastEpochTick            = now + 4000;
         if (epochSyncTimer == 0) epochSyncTimer = now;
+        loraMasterTimerTick = millis() - (1000 - (millis() - s_lastTimerTick)) + 400;
         loraSyncTimerReset = true;
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
@@ -537,10 +538,19 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
 
         uint16_t msUntilNext = ((uint16_t)buf[19] << 8) | buf[20];
         if (msUntilNext > 1000) msUntilNext = 1000;
+        // Compensam latenta transmisiei (~400ms la SF9 pentru 62 bytes)
+        uint32_t latency = 400;
+        uint32_t elapsed = (1000 - msUntilNext) + latency;
+        if (elapsed >= 1000) {
+            // A trecut o secunda completa in timpul transmisiei
+            if (gameTimeLeftSeconds > 0) gameTimeLeftSeconds--;
+            elapsed -= 1000;
+        }
+        loraRxTimerTick = millis() - elapsed;
+
         if (isRunning) {
             isGameTimerRunning  = true;
             gameTimeLeftSeconds = timeLeft;
-            lastTimerTick       = millis() - (1000 - msUntilNext);
             loraSyncTimerReset  = false;
         } else if (wasTimeOut) {
             isTimeOut           = true;
@@ -925,7 +935,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
 // ============================================================
 // API public
 // ============================================================
-void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t  penalties[4]) {
+void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t penalties[4], uint32_t lastTimerTick) {
 
     const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
@@ -970,7 +980,7 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
 }
 
 void loraSendStart(uint32_t gameTimeLeftSeconds) {
-    s_gameTimeLeft = gameTimeLeftSeconds;  // fara -1
+    s_gameTimeLeft = gameTimeLeftSeconds + 1;
     buildStart(gameTimeLeftSeconds);
     if (!inSafeWindow() || txState != TX_IDLE) {
         jitterPktType = PKT_START;

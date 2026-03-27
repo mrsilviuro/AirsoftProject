@@ -506,7 +506,15 @@ void loop() {
 
     if (loraSyncTimerReset) {
         loraSyncTimerReset = false;
-        lastTimerTick = millis();  // ← doar reset tick, fara releu
+        lastTimerTick = loraMasterTimerTick;  // ← nu millis()!
+    }
+
+    if (loraRxTimerTick > 0) {
+        Serial.print("[SYNC] loraRxTimerTick="); Serial.print(loraRxTimerTick);
+        Serial.print(" millis()="); Serial.print(millis());
+        Serial.print(" diff="); Serial.println(millis() - loraRxTimerTick);
+        lastTimerTick  = loraRxTimerTick;
+        loraRxTimerTick = 0;
     }
 
     if (loraStartJustSent) {
@@ -524,7 +532,7 @@ void loop() {
         Serial.println(gameTimeLeftSeconds);
         if (loraStartGameTimeLeft > 0) {
             isGameTimerRunning  = true;
-            gameTimeLeftSeconds = loraStartGameTimeLeft;
+            gameTimeLeftSeconds = isMasterNode ? loraStartGameTimeLeft + 1 : loraStartGameTimeLeft;
             lastTimerTick       = millis();
             digitalWrite(PIN_RELAY, LOW);
             isRelayActive       = true;
@@ -1376,10 +1384,11 @@ void onShortPress(uint8_t btnIndex) {
                 rsTimeIdx, rsPenaltyIdx,
                 rsLimitIdx,
                 isGameTimerRunning, isTimeOut,
-                gameTimeLeftSeconds > 1 ? gameTimeLeftSeconds - 1 : gameTimeLeftSeconds,  // ← compensare
+                gameTimeLeftSeconds,
                 liveScore,
                 teamKills,
-                appliedPenalties
+                appliedPenalties,
+                lastTimerTick  // ← adauga doar asta
             );
             syncingStartTime = millis();
             currentState = STATE_SYNC_RECEIVED;
@@ -1452,5 +1461,3 @@ void onAdminCombo() {
     needsDisplayUpdate = true;
     Serial.println("[ADMIN] Intram in Admin Mode.");
 }
-
-loraSendSync(..., appliedPenalties, lastTimerTick);
