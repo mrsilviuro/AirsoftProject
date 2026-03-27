@@ -45,7 +45,7 @@ struct PageContext {
     Team respawnTeam;
     uint8_t queueCount;
     uint8_t queueHead;
-    uint32_t respawnQueue[100];  // Copie locala a cozii (MAX_QUEUE=100)
+    uint32_t respawnQueue[1];
     uint16_t respawnPenaltyPoints;
     uint16_t teamMaxRespawns[4];
     uint16_t teamKills[4];

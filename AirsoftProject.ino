@@ -516,8 +516,9 @@ void loop() {
         loraStartPendingTime = millis() + 400;  // ← 400ms delay
     }
 
-    if (loraStartPendingTime > 0 && millis() >= loraStartPendingTime) {
-        loraStartPendingTime = 0;
+   if (loraStartPendingTime > 0 && millis() >= loraStartPendingTime) {
+    loraStartPendingTime = 0;
+    if (loraStartGameTimeLeft > 0) {  // ← verificam ca avem timp valid
         isGameTimerRunning  = true;
         gameTimeLeftSeconds = loraStartGameTimeLeft;
         lastTimerTick       = millis();
@@ -525,6 +526,7 @@ void loop() {
         isRelayActive       = true;
         relayTurnOffTime    = millis() + 5000;
     }
+}
 
     if (loraSettingsReceived) {
         loraSettingsReceived = false;
@@ -925,17 +927,14 @@ void loop() {
                 lastRfidRead = millis();
 
                 if (rfid.result == RFID_READ_ADMIN) {
-                    // START JOC!
                     loraSendStart(gameTimeLeftSeconds);
-                    digitalWrite(PIN_RELAY, LOW);
-                    isRelayActive = true;
-                    relayTurnOffTime = now + 5000;
+                    // ← fara releu si fara isGameTimerRunning aici!
                     waitAdminStart = 0;
                     currentState = STATE_PAGES;
                     currentPage = 5;
                     needsDisplayUpdate = true;
                     tone(PIN_BUZZER, 1500, 200);
-                    Serial.println("[GAME] Timer pornit!");
+                    Serial.println("[GAME] Start transmis!");
                 } else if (rfid.result == RFID_READ_POINTS || rfid.result == RFID_READ_INVALID) {
                     // Card gresit — refuz
                     tone(PIN_BUZZER, 200, 300);
