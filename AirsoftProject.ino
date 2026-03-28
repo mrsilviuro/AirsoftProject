@@ -532,7 +532,7 @@ void loop() {
         Serial.println(gameTimeLeftSeconds);
         if (loraStartGameTimeLeft > 0) {
             isGameTimerRunning  = true;
-            gameTimeLeftSeconds = isMasterNode ? loraStartGameTimeLeft + 1 : loraStartGameTimeLeft;
+            gameTimeLeftSeconds = loraStartGameTimeLeft;
             lastTimerTick       = millis();
             digitalWrite(PIN_RELAY, LOW);
             isRelayActive       = true;
@@ -855,10 +855,10 @@ void loop() {
 
         case STATE_SYNC_RECEIVED:
             if (needsDisplayUpdate) {
-                drawSyncedScreen(loraSyncFromUnit);
+                drawSyncingScreen();
                 needsDisplayUpdate = false;
             }
-            if (millis() - syncedScreenStart >= 2000) {
+            if (millis() - syncingStartTime >= 2000) {
                 currentState = STATE_ADMIN_MENU;
                 needsDisplayUpdate = true;
             }

@@ -20,7 +20,7 @@ static uint32_t noteStartTime = 0;
 // displayInit()
 // ============================================================
 void displayInit() {
-    display.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    display.begin(SSD1306_EXTERNALVCC, 0x3C);
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.display();
@@ -1164,11 +1164,16 @@ void drawSyncWarningScreen() {
 
 void drawSyncingScreen() {
     display.clearDisplay();
+    display.setTextSize(2);
+    const char* l1 = "SYNCING";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 12)) / 2;
+    display.setCursor(x, 15);
+    display.print(l1);
     display.setTextSize(1);
-    const char* msg = "SYNCING ...";
-    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
-    display.setCursor(x, 28);
-    display.print(msg);
+    const char* l2 = "Please wait ...";
+    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
+    display.setCursor(x, 45);
+    display.print(l2);
     display.display();
 }
 

@@ -980,7 +980,7 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
 }
 
 void loraSendStart(uint32_t gameTimeLeftSeconds) {
-    s_gameTimeLeft = gameTimeLeftSeconds + 1;
+    s_gameTimeLeft = gameTimeLeftSeconds;
     buildStart(gameTimeLeftSeconds);
     if (!inSafeWindow() || txState != TX_IDLE) {
         jitterPktType = PKT_START;
