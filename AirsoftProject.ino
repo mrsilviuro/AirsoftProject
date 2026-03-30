@@ -252,7 +252,7 @@ void handleActionProgress() {
         // Releu 3 secunde (beep/sirena scurta)
         digitalWrite(PIN_RELAY, LOW);
         isRelayActive = true;
-        relayTurnOffTime = now + 3000;
+        relayTurnOffTime = now + 5000;
 
         // Trecem pe ecranul de succes
         currentState = STATE_SUCCESS;

@@ -1,53 +1,75 @@
 #include "rfid.h"
 
-MFRC522 mfrc522(PIN_RFID_SDA, PIN_RFID_RST);
+static Adafruit_PN532 nfc(PIN_RFID_SDA);  // CS/SS pin
 
-static MFRC522::MIFARE_Key defaultKey = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}};
-static MFRC522::MIFARE_Key customKey = {{0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6}};
+static uint8_t defaultKey[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+static uint8_t customKey[6]  = {0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6};
 
+// ============================================================
+// rfidInit()
+// ============================================================
+void rfidInit() {
+    SPI.begin(PIN_RFID_SCK, PIN_RFID_MISO, PIN_RFID_MOSI);
+    nfc.begin();
+
+    uint32_t ver = nfc.getFirmwareVersion();
+    if (!ver) {
+        Serial.println("[RFID] PN532 negasit!");
+        return;
+    }
+
+    Serial.print("[RFID] PN532 v");
+    Serial.print((ver >> 16) & 0xFF);
+    Serial.print('.');
+    Serial.println((ver >> 8) & 0xFF);
+
+    nfc.SAMConfig();
+    nfc.setPassiveActivationRetries(0x03);
+    Serial.println("[RFID] Initializat.");
+}
+
+// ============================================================
+// rfidReadTag()
+// ============================================================
 RfidReadData rfidReadTag() {
     RfidReadData data = {RFID_READ_NONE, 0};
 
-    if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) return data;
+    uint8_t uid[7] = {0};
+    uint8_t uidLength = 0;
 
-    const byte blockAddr = RFID_BLOCK_ADDR;
-    MFRC522::StatusCode status;
+    if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50)) {
+        return data;
+    }
 
-    // Autentificare cu cheia custom
-    status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blockAddr, &customKey, &mfrc522.uid);
+    const uint8_t blockAddr = RFID_BLOCK_ADDR;
 
-    if (status != MFRC522::STATUS_OK) {
-        mfrc522.PCD_StopCrypto1();
-        mfrc522.PICC_HaltA();
+    if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blockAddr, 0, customKey)) {
+        Serial.println("[RFID] Auth esuat");
         data.result = RFID_READ_INVALID;
         return data;
     }
 
-    // Citim blocul 4
-    byte buf[18];
-    byte size = sizeof(buf);
-    status = mfrc522.MIFARE_Read(blockAddr, buf, &size);
-    if (status != MFRC522::STATUS_OK) {
-        mfrc522.PCD_StopCrypto1();
-        mfrc522.PICC_HaltA();
+    uint8_t buf[16];
+    if (!nfc.mifareclassic_ReadDataBlock(blockAddr, buf)) {
+        Serial.println("[RFID] Read esuat");
         data.result = RFID_READ_INVALID;
         return data;
     }
 
-    // Verificam magic byte
     if (buf[0] != RFID_MAGIC_BYTE) {
-        mfrc522.PCD_StopCrypto1();
-        mfrc522.PICC_HaltA();
+        Serial.print("[RFID] Magic byte gresit: 0x");
+        Serial.println(buf[0], HEX);
         data.result = RFID_READ_INVALID;
         return data;
     }
 
-    // Verificam checksum cu UID
-    byte cs = buf[0] ^ buf[1] ^ buf[2] ^ buf[3];
-    for (byte i = 0; i < mfrc522.uid.size; i++) cs ^= mfrc522.uid.uidByte[i];
+    uint8_t cs = buf[0] ^ buf[1] ^ buf[2] ^ buf[3];
+    for (uint8_t i = 0; i < uidLength; i++) cs ^= uid[i];
     if (cs != buf[4]) {
-        mfrc522.PCD_StopCrypto1();
-        mfrc522.PICC_HaltA();
+        Serial.print("[RFID] Checksum gresit: calc=0x");
+        Serial.print(cs, HEX);
+        Serial.print(" citit=0x");
+        Serial.println(buf[4], HEX);
         data.result = RFID_READ_INVALID;
         return data;
     }
@@ -56,149 +78,118 @@ RfidReadData rfidReadTag() {
     uint16_t points = (buf[2] << 8) | buf[3];
 
     if (tagType == 2) {
-        // Card Admin — nu il ardem
-        mfrc522.PCD_StopCrypto1();
-        mfrc522.PICC_HaltA();
         data.result = RFID_READ_ADMIN;
         return data;
     }
 
     if (tagType == 1) {
         if (points == 0) {
-            // Card deja ars
-            mfrc522.PCD_StopCrypto1();
-            mfrc522.PICC_HaltA();
             data.result = RFID_READ_INVALID;
             return data;
         }
-
-        mfrc522.PCD_StopCrypto1(); mfrc522.PICC_HaltA();
-
         data.result = RFID_READ_POINTS;
         data.points = points;
         return data;
     }
 
-    mfrc522.PCD_StopCrypto1();
-    mfrc522.PICC_HaltA();
     data.result = RFID_READ_INVALID;
     return data;
 }
 
-void rfidInit() {
-    SPI.begin(PIN_RFID_SCK, PIN_RFID_MISO, PIN_RFID_MOSI, PIN_RFID_SDA);
-    mfrc522.PCD_Init();
-    Serial.println("[RFID] Initializat.");
+// ============================================================
+// rfidBurnTag()
+// ============================================================
+bool rfidBurnTag() {
+    uint8_t uid[7] = {0};
+    uint8_t uidLength = 0;
+
+    if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50)) {
+        return false;
+    }
+
+    if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, RFID_BLOCK_ADDR, 0, customKey)) {
+        return false;
+    }
+
+    uint8_t zeroBlock[16] = {0};
+    return nfc.mifareclassic_WriteDataBlock(RFID_BLOCK_ADDR, zeroBlock);
 }
 
+// ============================================================
+// rfidWriteTag()
+// ============================================================
 RfidWriteResult rfidWriteTag(uint8_t tagTypeToWrite, uint16_t points) {
-    const byte blockAddr = RFID_BLOCK_ADDR;
+    const uint8_t blockAddr = RFID_BLOCK_ADDR;
 
-    // 1. Cautam card
-    if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial()) {
+    uint8_t uid[7] = {0};
+    uint8_t uidLength = 0;
+
+    if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50)) {
         return RFID_TIMEOUT;
     }
 
-    MFRC522::StatusCode status;
     bool isNewCard = false;
     uint8_t currentType = 0;
 
-    // 2. Autentificare cu cheia custom
-    status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blockAddr, &customKey, &mfrc522.uid);
-
-    if (status != MFRC522::STATUS_OK) {
-        // Esuat — incercam cu cheia de fabrica (card nou)
-        mfrc522.PCD_StopCrypto1();
-        mfrc522.PICC_HaltA();
-
-        byte wakeBuf[2];
-        byte wakeSize = sizeof(wakeBuf);
-        mfrc522.PICC_WakeupA(wakeBuf, &wakeSize);
-        if (!mfrc522.PICC_ReadCardSerial()) return RFID_ERROR;
-
-        status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blockAddr, &defaultKey, &mfrc522.uid);
-        if (status != MFRC522::STATUS_OK) {
-            mfrc522.PICC_HaltA();
-            mfrc522.PCD_StopCrypto1();
+    // Incercam cheia custom
+    if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blockAddr, 0, customKey)) {
+        // Esuat — incercam cheia de fabrica (card nou)
+        if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50)) {
+            return RFID_ERROR;
+        }
+        if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blockAddr, 0, defaultKey)) {
             return RFID_ERROR;
         }
         isNewCard = true;
     }
 
-    // 3. Citim tipul curent al cardului (daca nu e nou)
+    // Citim tipul curent (daca nu e card nou)
     if (!isNewCard) {
-        byte buf[18];
-        byte size = sizeof(buf);
-        status = mfrc522.MIFARE_Read(blockAddr, buf, &size);
-        if (status == MFRC522::STATUS_OK && buf[0] == RFID_MAGIC_BYTE) {
-            currentType = buf[1];
+        uint8_t buf[16];
+        if (nfc.mifareclassic_ReadDataBlock(blockAddr, buf)) {
+            if (buf[0] == RFID_MAGIC_BYTE) {
+                currentType = buf[1];
+            }
         }
     }
 
-    // 4. Verificare permisiuni
+    // Verificare permisiuni
     if (tagTypeToWrite == 1 && currentType == 2) {
-        mfrc522.PICC_HaltA();
-        mfrc522.PCD_StopCrypto1();
-        return RFID_DENIED;  // Nu putem suprascrie Admin cu Points
+        return RFID_DENIED;
     }
 
     bool revoking = (tagTypeToWrite == 2 && currentType == 2);
 
-    // 5. Construim blocul de date
-    byte dataBlock[16] = {0};
-
+    // Construim blocul de date
+    uint8_t dataBlock[16] = {0};
     if (!revoking) {
         dataBlock[0] = RFID_MAGIC_BYTE;
         dataBlock[1] = tagTypeToWrite;
         dataBlock[2] = (points >> 8) & 0xFF;
         dataBlock[3] = points & 0xFF;
 
-        // Checksum: bytes 0-3 XOR cu toti bytes din UID
-        byte cs = dataBlock[0] ^ dataBlock[1] ^ dataBlock[2] ^ dataBlock[3];
-        for (byte i = 0; i < mfrc522.uid.size; i++) cs ^= mfrc522.uid.uidByte[i];
+        uint8_t cs = dataBlock[0] ^ dataBlock[1] ^ dataBlock[2] ^ dataBlock[3];
+        for (uint8_t i = 0; i < uidLength; i++) cs ^= uid[i];
         dataBlock[4] = cs;
     }
-    // daca revoking, dataBlock ramane plin de zerouri = stergere
 
-    // 6. Scriem blocul de date
-    status = mfrc522.MIFARE_Write(blockAddr, dataBlock, 16);
-    if (status != MFRC522::STATUS_OK) {
-        mfrc522.PICC_HaltA();
-        mfrc522.PCD_StopCrypto1();
+    if (!nfc.mifareclassic_WriteDataBlock(blockAddr, dataBlock)) {
         return RFID_ERROR;
     }
 
-    // 7. Daca e card nou sau scriem Admin, schimbam cheia sectorului
+    // Schimbam cheia daca e card nou sau scriem Admin
     if (isNewCard || tagTypeToWrite == 2) {
-        byte trailerBlock = 7;  // Trailer pentru sectorul 1 (block 4-7)
-        byte sectorTrailer[16] = {customKey.keyByte[0], customKey.keyByte[1], customKey.keyByte[2], customKey.keyByte[3], customKey.keyByte[4], customKey.keyByte[5], 0xFF, 0x07, 0x80, 0x69, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-        mfrc522.MIFARE_Write(trailerBlock, sectorTrailer, 16);
+        uint8_t sectorTrailer[16] = {
+            customKey[0], customKey[1], customKey[2],
+            customKey[3], customKey[4], customKey[5],
+            0xFF, 0x07, 0x80, 0x69,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+        };
+        nfc.mifareclassic_WriteDataBlock(7, sectorTrailer);
     }
-
-    mfrc522.PICC_HaltA();
-    mfrc522.PCD_StopCrypto1();
 
     if (revoking) return RFID_OK_REVOKED;
     if (tagTypeToWrite == 2) return RFID_OK_ADMIN;
     if (isNewCard || currentType == 0) return RFID_OK_NEW;
     return RFID_OK_OVERWRITE;
-}
-
-bool rfidBurnTag() {
-    if (!mfrc522.PICC_IsNewCardPresent() || !mfrc522.PICC_ReadCardSerial())
-        return false;
-
-    MFRC522::StatusCode status;
-    status = mfrc522.PCD_Authenticate(
-        MFRC522::PICC_CMD_MF_AUTH_KEY_A, RFID_BLOCK_ADDR, &customKey, &mfrc522.uid);
-
-    if (status != MFRC522::STATUS_OK) {
-        mfrc522.PCD_StopCrypto1(); mfrc522.PICC_HaltA();
-        return false;
-    }
-
-    byte zeroBlock[16] = {0};
-    status = mfrc522.MIFARE_Write(RFID_BLOCK_ADDR, zeroBlock, 16);
-    mfrc522.PCD_StopCrypto1(); mfrc522.PICC_HaltA();
-    return (status == MFRC522::STATUS_OK);
 }
