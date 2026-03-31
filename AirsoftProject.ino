@@ -15,6 +15,7 @@ bool needsDisplayUpdate = true;
 // --- Display brightness ---
 uint32_t lastActivityTime = 0;
 bool isDimmed = false;
+uint32_t lastDisplayRefresh = 0;
 
 // --- Meniu ---
 uint8_t menuIndex = 0;
@@ -324,6 +325,12 @@ void buildContext() {
 
     ctx.globalUnitMode[UNIT_ID - 1] = myMode;
     ctx.lastSeenTime[UNIT_ID - 1] = lastSeenTime[UNIT_ID - 1]; // ← din lora.cpp
+    uint8_t localBars = 0;
+    if (batteryPercent >= 80) localBars = 4;
+    else if (batteryPercent >= 60) localBars = 3;
+    else if (batteryPercent >= 40) localBars = 2;
+    else if (batteryPercent >= 20) localBars = 1;
+    ctx.globalBattery[UNIT_ID - 1] = localBars;
 
     if (myMode == 1) {
         ctx.globalUnitStatus[UNIT_ID - 1] = sectorOwner;
@@ -492,6 +499,12 @@ void loop() {
                respawnTeam, batteryPercent,
                isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
 
+    // Refresh registre display — previne "drift" imagine
+    if (now - lastDisplayRefresh >= 3000) {
+        lastDisplayRefresh = now;
+        displayRefreshRegisters();
+    }
+
     for (uint8_t i = 0; i < 4; i++) {
         if (loraRxScores[i] > liveScore[i])
             liveScore[i] = loraRxScores[i];
@@ -655,9 +668,14 @@ void loop() {
     }
 
     // Auto-dim display
-    if (!isDimmed && (now - lastActivityTime >= 15000)) {
+    if (!isDimmed && (now - lastActivityTime >= 30000)) {
         isDimmed = true;
         setBrightness(10);  // ~10%
+        // Auto-return la pagina 1 daca suntem pe alta pagina
+        if (currentState == STATE_PAGES && currentPage > 0) {
+            currentPage = 0;
+            needsDisplayUpdate = true;
+        }
     }
 
     if (selectedMode == 0 && sectorOwner != TEAM_NEUTRAL && lastPointTick == 0) {

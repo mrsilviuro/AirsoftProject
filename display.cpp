@@ -21,6 +21,7 @@ static uint32_t noteStartTime = 0;
 // ============================================================
 void displayInit() {
     display.begin(SSD1306_EXTERNALVCC, 0x3C);
+    Wire.setClock(100000);
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.display();
@@ -34,6 +35,13 @@ void displayInit() {
     for (uint8_t i = 0; i < 4; i++) {
         digitalWrite(PIN_LEDS[i], (i == 0) ? HIGH : LOW);
     }
+}
+
+void displayRefreshRegisters() {
+    display.ssd1306_command(0x2E);  // Deactivate scroll
+    display.ssd1306_command(0x40);  // Display start line = 0
+    display.ssd1306_command(0xD3);  // Set display offset
+    display.ssd1306_command(0x00);  // Offset = 0
 }
 // ============================================================
 // handleBoot()
@@ -705,7 +713,7 @@ void drawPages(const PageContext& ctx) {
                     display.setCursor(10, 30);
                     display.print("No active units ...");
                 } else {
-                    uint8_t rightMargin = (count > 4) ? 3 : 1;
+                    uint8_t rightMargin = (count > 4) ? 3 : 0;
                     uint8_t shown = 0;
                     for (uint8_t i = scroll; i < count && shown < 4; i++) {
                         uint8_t y = 15 + (shown * 14);
@@ -744,7 +752,7 @@ void drawPages(const PageContext& ctx) {
                 display.setCursor(10, 30);
                 display.print("No active units ...");
             } else {
-                uint8_t rightMargin = (count > 4) ? 3 : 1;
+                uint8_t rightMargin = (count > 4) ? 3 : 0;
                 uint8_t shown = 0;
                 for (uint8_t i = scroll; i < count && shown < 4; i++) {
                     uint8_t uid = activeUnits[i];

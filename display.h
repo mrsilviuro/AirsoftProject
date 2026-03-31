@@ -171,3 +171,5 @@ void drawScrollbar(uint8_t totalItems, uint8_t visibleItems, uint8_t scrollIndex
 
 void drawSyncWarningScreen();
 void drawSyncingScreen();
+
+void displayRefreshRegisters();
