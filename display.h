@@ -26,6 +26,7 @@ struct PageContext {
     bool isGameTimerRunning;
     uint32_t gameTimeLeftSeconds;
     int32_t appliedPenalties[4];
+    bool isGamePaused;
 
     // --- Sector ---
     Team sectorOwner;

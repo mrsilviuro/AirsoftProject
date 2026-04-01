@@ -30,6 +30,8 @@
 #define EVT_MODE_BOMB       7
 #define EVT_MODE_RESPAWN    8
 #define EVT_MODE_UNSET      9
+#define EVT_GAME_PAUSED     10
+#define EVT_GAME_RESUMED    11
 
 // ============================================================
 // Stare retea — accesibila din .ino
@@ -70,6 +72,9 @@ extern uint8_t rx_rsTimeIdx, rx_rsPenaltyIdx;
 extern uint8_t rx_rsLimitIdx[4];
 
 extern bool loraStartJustSent;
+
+extern bool loraPauseJustSent;
+extern bool loraResumeJustSent;
 
 // ============================================================
 // Initializare

@@ -115,6 +115,12 @@ uint32_t lastTimerTick = 0;
 int32_t appliedPenalties[4] = {0, 0, 0, 0};
 uint32_t loraStartPendingTime = 0;
 
+bool isGamePaused = false;
+uint32_t pauseStartTime = 0;
+uint32_t loraPausePendingTime = 0;
+uint32_t loraResumePendingTime = 0;
+uint8_t pendingAdminAction = 0;  // 0=start, 1=pause, 2=resume
+
 AdminContext buildAdminContext() {
     AdminContext ac;
     ac.selectedPage = adminSelectedPage;
@@ -270,6 +276,42 @@ void handleActionProgress() {
 }
 
 // ============================================================
+// applyGamePause()
+// ============================================================
+void applyGamePause() {
+    isGamePaused = true;
+    pauseStartTime = millis();
+    tone(PIN_BUZZER, 500, 300);
+    needsDisplayUpdate = true;
+    Serial.println("[GAME] PAUSED!");
+}
+
+// ============================================================
+// applyGameResume()
+// ============================================================
+void applyGameResume() {
+    uint32_t pauseDuration = millis() - pauseStartTime;
+    isGamePaused = false;
+
+    // Ajustam toti timpii absoluti
+    if (isGameTimerRunning) lastTimerTick += pauseDuration;
+    if (captureStartTime > 0) captureStartTime += pauseDuration;
+    if (lastPointTick > 0) lastPointTick += pauseDuration;
+    if (isBombArmed && bombPlantTime > 0) bombPlantTime += pauseDuration;
+    if (isCooldownActive && cooldownStartTime > 0) cooldownStartTime += pauseDuration;
+    for (uint8_t i = 0; i < queueCount; i++) {
+        uint8_t idx = (queueHead + i) % 100;
+        respawnQueue[idx] += pauseDuration;
+    }
+
+    tone(PIN_BUZZER, 1500, 300);
+    needsDisplayUpdate = true;
+    Serial.print("[GAME] RESUMED! Pauza: ");
+    Serial.print(pauseDuration / 1000);
+    Serial.println("s");
+}
+
+// ============================================================
 // buildContext()
 // ============================================================
 void buildContext() {
@@ -281,6 +323,7 @@ void buildContext() {
     ctx.winCondition = currentWinCondition;
     ctx.isGameTimerRunning = isGameTimerRunning;
     ctx.gameTimeLeftSeconds = gameTimeLeftSeconds;
+    ctx.isGamePaused = isGamePaused;
 
     // Sector — date REALE
     ctx.sectorOwner = sectorOwner;
@@ -471,6 +514,7 @@ void setup() {
     esp_bt_controller_disable();
     Serial.begin(115200);
 
+
     for (uint8_t i = 0; i < 4; i++) {
         pinMode(PIN_LEDS[i], OUTPUT);
         digitalWrite(PIN_LEDS[i], LOW);
@@ -553,6 +597,26 @@ void loop() {
         }
     }
 
+    if (loraPauseJustSent) {
+        loraPauseJustSent = false;
+        loraPausePendingTime = millis() + 400;
+    }
+
+    if (loraPausePendingTime > 0 && millis() >= loraPausePendingTime) {
+        loraPausePendingTime = 0;
+        if (!isGamePaused) applyGamePause();
+    }
+
+    if (loraResumeJustSent) {
+        loraResumeJustSent = false;
+        loraResumePendingTime = millis() + 400;
+    }
+
+    if (loraResumePendingTime > 0 && millis() >= loraResumePendingTime) {
+        loraResumePendingTime = 0;
+        if (isGamePaused) applyGameResume();
+    }
+
     if (loraSettingsReceived) {
         loraSettingsReceived = false;
 
@@ -631,12 +695,12 @@ void loop() {
     }
     wasGameTimerRunning = isGameTimerRunning;
 
-    if (isGameTimerRunning && (now - lastTimerTick > 2000)) {
+    if (isGameTimerRunning && !isGamePaused && (now - lastTimerTick > 2000)) {
         lastTimerTick = now - 1000;
     }
 
     // Scadere timer joc
-    if (isGameTimerRunning && gameTimeLeftSeconds > 0) {
+    if (isGameTimerRunning && !isGamePaused && gameTimeLeftSeconds > 0) {
         if (now - lastTimerTick >= 1000) {
             lastTimerTick += 1000;
             gameTimeLeftSeconds--;
@@ -683,7 +747,7 @@ void loop() {
     }
 
     // Generare puncte sector (la 10 secunde)
-    if (!isTimeOut && selectedMode == 0 && sectorOwner != TEAM_NEUTRAL) {
+    if (!isTimeOut && !isGamePaused && selectedMode == 0 && sectorOwner != TEAM_NEUTRAL) {
         if (now - lastPointTick >= 10000) {
             uint32_t minutesHeld = (now - captureStartTime) / 60000;
             uint32_t bonus = (bonusIntervalMinutes > 0) ? (minutesHeld / bonusIntervalMinutes) : 0;
@@ -696,7 +760,7 @@ void loop() {
     }
 
     // Timer bomba
-    if (selectedMode == 1 && isBombArmed) {
+    if (selectedMode == 1 && isBombArmed && !isGamePaused) {
         uint32_t elapsed = now - bombPlantTime;
         uint32_t remaining = bombTimerMs - elapsed;
 
@@ -749,7 +813,7 @@ void loop() {
     }
 
     // Cooldown terminat
-    if (selectedMode == 1 && isCooldownActive) {
+    if (selectedMode == 1 && isCooldownActive && !isGamePaused) {
         if (now - cooldownStartTime >= cooldownMs) {
             isCooldownActive = false;
             Serial.println("[BOMB] Cooldown terminat.");
@@ -773,7 +837,7 @@ void loop() {
             lastRfidRead = millis();
             resetActivity();
 
-        } else if (rfid.result == RFID_READ_POINTS && selectedMode != -1 && !isTimeOut) {
+        } else if (rfid.result == RFID_READ_POINTS && selectedMode != -1 && !isTimeOut && !isGamePaused) {
             // Determinam echipa proprietara
             Team owner = TEAM_NEUTRAL;
             if (selectedMode == 0)
@@ -820,7 +884,7 @@ void loop() {
     static uint8_t flashStep = 0;
     static uint32_t flashStepStart = 0;
 
-    if (selectedMode == 2 && queueCount > 0) {
+    if (selectedMode == 2 && queueCount > 0 && !isGamePaused) {
         if (now >= respawnQueue[queueHead]) {
             queueCount--;
             queueHead = (queueHead + 1) % 100;
@@ -972,14 +1036,21 @@ void loop() {
                 lastRfidRead = millis();
 
                 if (rfid.result == RFID_READ_ADMIN) {
-                    loraSendStart(gameTimeLeftSeconds);
-                    // ← fara releu si fara isGameTimerRunning aici!
+                    if (pendingAdminAction == 0) {
+                        loraSendStart(gameTimeLeftSeconds);
+                        Serial.println("[GAME] Start transmis!");
+                    } else if (pendingAdminAction == 1) {
+                        loraSendUrgent(EVT_GAME_PAUSED, 0);
+                        Serial.println("[GAME] Pause transmis!");
+                    } else if (pendingAdminAction == 2) {
+                        loraSendUrgent(EVT_GAME_RESUMED, 0);
+                        Serial.println("[GAME] Resume transmis!");
+                    }
                     waitAdminStart = 0;
                     currentState = STATE_PAGES;
                     currentPage = 5;
                     needsDisplayUpdate = true;
                     tone(PIN_BUZZER, 1500, 200);
-                    Serial.println("[GAME] Start transmis!");
                 } else if (rfid.result == RFID_READ_POINTS || rfid.result == RFID_READ_INVALID) {
                     // Card gresit — refuz
                     tone(PIN_BUZZER, 200, 300);
@@ -1146,9 +1217,33 @@ void onShortPress(uint8_t btnIndex) {
         }
 
     } else if (currentState == STATE_PAGES) {
-        // GALBEN in modul Respawn — kill inainte de orice navigare
-        if (selectedMode == 2 && btnIndex == 3 &&
-            !(currentPage == 5 && gameTimeLeftSeconds > 0 && !isGameTimerRunning)) {
+        // PAGE 6 — YELLOW: START / PAUSE / RESUME
+        if (btnIndex == 3 && currentPage == 5 && !isTimeOut) {
+            if (isGamePaused) {
+                pendingAdminAction = 2;  // resume
+                currentState = STATE_WAIT_ADMIN_TAG;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 1000, 100);
+            } else if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
+                pendingAdminAction = 0;  // start
+                currentState = STATE_WAIT_ADMIN_TAG;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 1000, 100);
+            } else if (selectedMode != -1) {
+                pendingAdminAction = 1;  // pause
+                currentState = STATE_WAIT_ADMIN_TAG;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 1000, 100);
+            }
+            return;
+        }
+
+        // GALBEN in modul Respawn — kill (blocat in pauza)
+        if (selectedMode == 2 && btnIndex == 3 && currentPage != 5) {
+            if (isGamePaused) {
+                tone(PIN_BUZZER, 200, 200);
+                return;
+            }
             bool limitReached = (teamMaxRespawns[respawnTeam - 1] > 0 && teamKills[respawnTeam - 1] >= teamMaxRespawns[respawnTeam - 1]);
 
             if (!isTimeOut && !limitReached && queueCount < 100 && !(gameTimeLeftSeconds > 0 && !isGameTimerRunning)) {
@@ -1420,6 +1515,10 @@ void onLongPress(uint8_t btnIndex) {
     resetActivity();
     // Actiunile de gameplay sunt permise doar pe pagina 1, in STATE_PAGES
     if (currentState != STATE_PAGES || isTimeOut) return;
+    if (isGamePaused) {
+        tone(PIN_BUZZER, 200, 200);
+        return;
+    }
     if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
         tone(PIN_BUZZER, 200, 200);
         return;

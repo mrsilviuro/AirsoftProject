@@ -319,7 +319,13 @@ void drawPages(const PageContext& ctx) {
         // ====================================================
         case 0: {
             // --- GAME OVER ---
-            if (ctx.isTimeOut) {
+            if (ctx.isGamePaused) {
+                display.setTextSize(2);
+                const char* pmsg = "PAUSED";
+                uint8_t x = (SCREEN_WIDTH - (strlen(pmsg) * 12)) / 2;
+                display.setCursor(x, 24);
+                display.print(pmsg);
+            } else if (ctx.isTimeOut) {
                 if (ctx.conquestWinner != TEAM_NEUTRAL) {
                     display.setTextSize(2);
                     const char* t1 = TEAM_NAMES[ctx.conquestWinner - 1];
@@ -816,7 +822,9 @@ void drawPages(const PageContext& ctx) {
                 line2 = "By Any";
             const char* line3 = "Time Left";
             char line4[25];
-            if (ctx.isTimeOut) {
+            if (ctx.isGamePaused) {
+                strcpy(line4, "** PAUSED **");
+            } else if (ctx.isTimeOut) {
                 strcpy(line4, "GAME OVER!");
             } else if (ctx.winCondition == WIN_BY_CONQUEST) {
                 strcpy(line4, "No time limit!");
@@ -852,6 +860,21 @@ void drawPages(const PageContext& ctx) {
             display.print(line4);
             break;
         }
+    }
+    // Hint buton
+    const char* hint = "";
+    if (!ctx.isTimeOut) {
+        if (ctx.isGamePaused)
+            hint = "YELLOW to resume";
+        else if (ctx.gameTimeLeftSeconds > 0 && !ctx.isGameTimerRunning)
+            hint = "YELLOW to start";
+        else if (ctx.isGameTimerRunning || ctx.gameTimeLeftSeconds == 0)
+            hint = "YELLOW to pause";
+    }
+    if (strlen(hint) > 0) {
+        uint8_t hx = (SCREEN_WIDTH - (strlen(hint) * 6)) / 2;
+        display.setCursor(hx, 56);
+        display.print(hint);
     }
     display.display();
 }

@@ -81,6 +81,8 @@ uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
 uint8_t rx_rsLimitIdx[4] = {0};
 
 bool loraStartJustSent = false;
+bool loraPauseJustSent = false;
+bool loraResumeJustSent = false;
 int32_t loraRxPenalties[4] = {0};
 bool loraSyncTimerReset = false;
 uint32_t loraStartGameTimeLeft = 0;
@@ -430,6 +432,8 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
     } else if (txPktType == PKT_URGENT) {
         Serial.print("[LORA] Urgent trimis: ");
         Serial.println(s_urgentEvent);
+        if (s_urgentEvent == EVT_GAME_PAUSED) loraPauseJustSent = true;
+        else if (s_urgentEvent == EVT_GAME_RESUMED) loraResumeJustSent = true;
     } else if (txPktType == PKT_EPOCH_SYNC) {
         Serial.println("[LORA] EpochSync trimis.");
         uint8_t mySecond = (UNIT_ID - 1) * 5;
@@ -635,6 +639,10 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             else if (piggy == EVT_BOMB_DEFUSED || piggy == EVT_BOMB_EXPLODED) {
                 if (globalUnitStatus[sender-1] == TEAM_PLANTED)
                     globalEventTime[sender-1] = now;
+            } else if (piggy == EVT_GAME_PAUSED) {
+                loraPauseJustSent = true;
+            } else if (piggy == EVT_GAME_RESUMED) {
+                loraResumeJustSent = true;
             }
         }
     } else if (pktType == PKT_URGENT) {
@@ -677,6 +685,12 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             globalUnitMode[sender - 1] = 0;
             globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
             globalEventTime[sender - 1] = 0;
+        } else if (eType == EVT_GAME_PAUSED) {
+            loraPauseJustSent = true;
+            Serial.println("[LORA] PAUSE primit!");
+        } else if (eType == EVT_GAME_RESUMED) {
+            loraResumeJustSent = true;
+            Serial.println("[LORA] RESUME primit!");
         }
 
     } else if (pktType == PKT_EPOCH_SYNC) {
