@@ -334,6 +334,7 @@ void buildContext() {
     // Bomb (placeholder)
     ctx.isBombArmed = isBombArmed;
     ctx.isCooldownActive = isCooldownActive;
+    ctx.bombOwner = bombOwner;
     ctx.bombPlantTime = bombPlantTime;
     ctx.bombTimerMs = bombTimerMs;
     ctx.cooldownStartTime = cooldownStartTime;

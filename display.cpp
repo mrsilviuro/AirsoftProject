@@ -491,7 +491,8 @@ void drawPages(const PageContext& ctx) {
                 if (ctx.queueCount > 0) {
                     display.setTextSize(2);
                     uint32_t rem = 0;
-                    if (ctx.respawnQueue[0] > millis()) rem = (ctx.respawnQueue[0] - millis()) / 1000;
+                    uint32_t nowMs = millis();
+                    if (ctx.respawnQueue[0] > nowMs) rem = (ctx.respawnQueue[0] - nowMs) / 1000;
                     char timeBuf[10];
                     snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", rem / 60, rem % 60);
                     uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
@@ -560,7 +561,7 @@ void drawPages(const PageContext& ctx) {
             if (ctx.selectedMode == 0)
                 localOwner = ctx.sectorOwner;
             else if (ctx.selectedMode == 1 && ctx.isBombArmed)
-                localOwner = ctx.sectorOwner;
+                localOwner = ctx.bombOwner;
             else if (ctx.selectedMode == 2)
                 localOwner = ctx.respawnTeam;
             for (uint8_t i = 0; i < 4; i++) {
@@ -593,7 +594,7 @@ void drawPages(const PageContext& ctx) {
             if (ctx.selectedMode == 0)
                 localOwner = ctx.sectorOwner;
             else if (ctx.selectedMode == 1 && ctx.isBombArmed)
-                localOwner = ctx.sectorOwner;
+                localOwner = ctx.bombOwner;
             else if (ctx.selectedMode == 2)
                 localOwner = ctx.respawnTeam;
             for (uint8_t i = 0; i < 4; i++) {
