@@ -41,6 +41,11 @@ RfidReadData rfidReadTag() {
         return data;
     }
 
+    if (uidLength == 0 || uidLength > 7) {
+        data.result = RFID_READ_INVALID;
+        return data;
+    }
+
     const uint8_t blockAddr = RFID_BLOCK_ADDR;
 
     if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blockAddr, 0, customKey)) {
@@ -128,6 +133,10 @@ RfidWriteResult rfidWriteTag(uint8_t tagTypeToWrite, uint16_t points) {
         return RFID_TIMEOUT;
     }
 
+    if (uidLength == 0 || uidLength > 7) {
+        return RFID_ERROR;
+    }
+
     bool isNewCard = false;
     uint8_t currentType = 0;
 
@@ -135,6 +144,9 @@ RfidWriteResult rfidWriteTag(uint8_t tagTypeToWrite, uint16_t points) {
     if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blockAddr, 0, customKey)) {
         // Esuat — incercam cheia de fabrica (card nou)
         if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50)) {
+            return RFID_ERROR;
+        }
+        if (uidLength == 0 || uidLength > 7) {
             return RFID_ERROR;
         }
         if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blockAddr, 0, defaultKey)) {

@@ -37,6 +37,7 @@ struct PageContext {
     // --- Bomb ---
     bool isBombArmed;
     bool isCooldownActive;
+    Team bombOwner;
     uint32_t bombPlantTime;
     uint32_t bombTimerMs;
     uint32_t cooldownStartTime;
