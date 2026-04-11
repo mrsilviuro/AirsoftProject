@@ -423,7 +423,7 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         syncEpochSeconds         = 59;
         lastEpochTick            = now + 4000;
         if (epochSyncTimer == 0) epochSyncTimer = now;
-        loraMasterTimerTick = now - (1000 - (now - s_lastTimerTick)) + 400;
+        loraMasterTimerTick = millis() - (1000 - (millis() - s_lastTimerTick)) + 400;
         loraSyncTimerReset = true;
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
