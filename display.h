@@ -27,6 +27,7 @@ struct PageContext {
     uint32_t gameTimeLeftSeconds;
     int32_t appliedPenalties[4];
     bool isGamePaused;
+    uint32_t pauseStartTime;
 
     // --- Sector ---
     Team sectorOwner;
@@ -37,7 +38,6 @@ struct PageContext {
     // --- Bomb ---
     bool isBombArmed;
     bool isCooldownActive;
-    Team bombOwner;
     uint32_t bombPlantTime;
     uint32_t bombTimerMs;
     uint32_t cooldownStartTime;

@@ -319,13 +319,7 @@ void drawPages(const PageContext& ctx) {
         // ====================================================
         case 0: {
             // --- GAME OVER ---
-            if (ctx.isGamePaused) {
-                display.setTextSize(2);
-                const char* pmsg = "PAUSED";
-                uint8_t x = (SCREEN_WIDTH - (strlen(pmsg) * 12)) / 2;
-                display.setCursor(x, 24);
-                display.print(pmsg);
-            } else if (ctx.isTimeOut) {
+            if (ctx.isTimeOut) {
                 if (ctx.conquestWinner != TEAM_NEUTRAL) {
                     display.setTextSize(2);
                     const char* t1 = TEAM_NAMES[ctx.conquestWinner - 1];
@@ -359,18 +353,39 @@ void drawPages(const PageContext& ctx) {
                 }
                 break;
             }
+
             // --- SECTOR UNIT ---
             if (ctx.selectedMode == 0) {
-                char buf[25];
-                snprintf(buf, sizeof(buf), "Sector %s", UNIT_NAMES[UNIT_ID - 1]);
-                uint8_t x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
-                display.setCursor(x, 15);
-                display.print(buf);
+                // Liniile 1-2
+                if (ctx.isGamePaused) {
+                    display.setTextSize(2);
+                    const char* pmsg = "PAUSED";
+                    uint8_t x = (SCREEN_WIDTH - (strlen(pmsg) * 12)) / 2;
+                    display.setCursor(x, 20);
+                    display.print(pmsg);
+                    display.setTextSize(1);
+                } else {
+                    char buf[25];
+                    snprintf(buf, sizeof(buf), "Sector %s", UNIT_NAMES[UNIT_ID - 1]);
+                    uint8_t x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
+                    display.setCursor(x, 15);
+                    display.print(buf);
+                    if (ctx.sectorOwner == TEAM_NEUTRAL) {
+                        const char* s = "NEUTRAL";
+                        x = (SCREEN_WIDTH - (strlen(s) * 6)) / 2;
+                        display.setCursor(x, 27);
+                        display.print(s);
+                    } else {
+                        char held[25];
+                        snprintf(held, sizeof(held), "Held by: %s", TEAM_NAMES[ctx.sectorOwner - 1]);
+                        x = (SCREEN_WIDTH - (strlen(held) * 6)) / 2;
+                        display.setCursor(x, 27);
+                        display.print(held);
+                    }
+                }
+                // Liniile 3-4
+                uint8_t x;
                 if (ctx.sectorOwner == TEAM_NEUTRAL) {
-                    const char* s = "NEUTRAL";
-                    x = (SCREEN_WIDTH - (strlen(s) * 6)) / 2;
-                    display.setCursor(x, 27);
-                    display.print(s);
                     const char* l3 = "Hold any team button";
                     x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
                     display.setCursor(x, 41);
@@ -380,12 +395,9 @@ void drawPages(const PageContext& ctx) {
                     display.setCursor(x, 51);
                     display.print(l4);
                 } else {
-                    char held[25];
-                    snprintf(held, sizeof(held), "Held by: %s", TEAM_NAMES[ctx.sectorOwner - 1]);
-                    x = (SCREEN_WIDTH - (strlen(held) * 6)) / 2;
-                    display.setCursor(x, 27);
-                    display.print(held);
-                    uint32_t el = millis() - ctx.captureStartTime;
+                    uint32_t el = ctx.isGamePaused
+                    ? (ctx.pauseStartTime - ctx.captureStartTime)
+                    : (millis() - ctx.captureStartTime);
                     uint8_t h = el / 3600000;
                     uint8_t m = (el % 3600000) / 60000;
                     uint8_t s = (el % 60000) / 1000;
@@ -427,18 +439,52 @@ void drawPages(const PageContext& ctx) {
             }
             // --- BOMB UNIT ---
             else if (ctx.selectedMode == 1) {
-                if (ctx.isCooldownActive) {
-                    uint32_t el = millis() - ctx.cooldownStartTime;
-                    uint32_t rem = ctx.cooldownMs - el;
-                    uint8_t m = rem / 60000;
-                    uint8_t s = (rem % 60000) / 1000;
-                    char timeBuf[10];
-                    snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", m, s);
+                // Liniile 1-2
+                if (ctx.isGamePaused) {
                     display.setTextSize(2);
-                    uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
+                    const char* pmsg = "PAUSED";
+                    uint8_t x = (SCREEN_WIDTH - (strlen(pmsg) * 12)) / 2;
                     display.setCursor(x, 20);
-                    display.print(timeBuf);
+                    display.print(pmsg);
                     display.setTextSize(1);
+                } else {
+                    if (ctx.isCooldownActive) {
+                        uint32_t el = millis() - ctx.cooldownStartTime;
+                        uint32_t rem = ctx.cooldownMs - el;
+                        uint8_t m = rem / 60000;
+                        uint8_t s = (rem % 60000) / 1000;
+                        char timeBuf[10];
+                        snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", m, s);
+                        display.setTextSize(2);
+                        uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
+                        display.setCursor(x, 20);
+                        display.print(timeBuf);
+                        display.setTextSize(1);
+                    } else if (ctx.isBombArmed) {
+                        uint32_t el = millis() - ctx.bombPlantTime;
+                        uint32_t rem = ctx.bombTimerMs - el;
+                        uint8_t m = rem / 60000;
+                        uint8_t s = (rem % 60000) / 1000;
+                        uint8_t ms = (rem % 1000) / 10;
+                        char timeBuf[12];
+                        snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u:%02u", m, s, ms);
+                        display.setTextSize(2);
+                        uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
+                        display.setCursor(x, 20);
+                        display.print(timeBuf);
+                        display.setTextSize(1);
+                    } else {
+                        display.setTextSize(2);
+                        const char* s = "UNARMED";
+                        uint8_t x = (SCREEN_WIDTH - (strlen(s) * 12)) / 2;
+                        display.setCursor(x, 20);
+                        display.print(s);
+                        display.setTextSize(1);
+                    }
+                }
+                // Liniile 3-4
+                uint8_t x;
+                if (ctx.isCooldownActive) {
                     const char* l1 = "Bomb is cooling down";
                     x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
                     display.setCursor(x, 42);
@@ -448,18 +494,6 @@ void drawPages(const PageContext& ctx) {
                     display.setCursor(x, 54);
                     display.print(l2);
                 } else if (ctx.isBombArmed) {
-                    uint32_t el = millis() - ctx.bombPlantTime;
-                    uint32_t rem = ctx.bombTimerMs - el;
-                    uint8_t m = rem / 60000;
-                    uint8_t s = (rem % 60000) / 1000;
-                    uint8_t ms = (rem % 1000) / 10;
-                    char timeBuf[12];
-                    snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u:%02u", m, s, ms);
-                    display.setTextSize(2);
-                    uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
-                    display.setCursor(x, 20);
-                    display.print(timeBuf);
-                    display.setTextSize(1);
                     const char* l1 = "Hold any button to";
                     x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
                     display.setCursor(x, 42);
@@ -469,12 +503,6 @@ void drawPages(const PageContext& ctx) {
                     display.setCursor(x, 54);
                     display.print(l2);
                 } else {
-                    display.setTextSize(2);
-                    const char* s = "UNARMED";
-                    uint8_t x = (SCREEN_WIDTH - (strlen(s) * 12)) / 2;
-                    display.setCursor(x, 20);
-                    display.print(s);
-                    display.setTextSize(1);
                     const char* l1 = "Hold any team button";
                     x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
                     display.setCursor(x, 42);
@@ -487,18 +515,45 @@ void drawPages(const PageContext& ctx) {
             }
             // --- RESPAWN UNIT ---
             else if (ctx.selectedMode == 2) {
+                // Liniile 1-2
                 bool limitReached = (ctx.teamMaxRespawns[ctx.respawnTeam - 1] > 0 && ctx.teamKills[ctx.respawnTeam - 1] >= ctx.teamMaxRespawns[ctx.respawnTeam - 1]);
-                if (ctx.queueCount > 0) {
+                if (ctx.isGamePaused) {
                     display.setTextSize(2);
-                    uint32_t rem = 0;
-                    uint32_t nowMs = millis();
-                    if (ctx.respawnQueue[0] > nowMs) rem = (ctx.respawnQueue[0] - nowMs) / 1000;
-                    char timeBuf[10];
-                    snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", rem / 60, rem % 60);
-                    uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
-                    display.setCursor(x, 18);
-                    display.print(timeBuf);
+                    const char* pmsg = "PAUSED";
+                    uint8_t x = (SCREEN_WIDTH - (strlen(pmsg) * 12)) / 2;
+                    display.setCursor(x, 20);
+                    display.print(pmsg);
                     display.setTextSize(1);
+                } else {
+                    if (ctx.queueCount > 0) {
+                        display.setTextSize(2);
+                        uint32_t rem = 0;
+                        if (ctx.respawnQueue[0] > millis()) rem = (ctx.respawnQueue[0] - millis()) / 1000;
+                        char timeBuf[10];
+                        snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", rem / 60, rem % 60);
+                        uint8_t x = (SCREEN_WIDTH - (strlen(timeBuf) * 12)) / 2;
+                        display.setCursor(x, 18);
+                        display.print(timeBuf);
+                        display.setTextSize(1);
+                    } else if (limitReached) {
+                        display.setTextSize(2);
+                        const char* tn = TEAM_NAMES[ctx.respawnTeam - 1];
+                        uint8_t x = (SCREEN_WIDTH - (strlen(tn) * 12)) / 2;
+                        display.setCursor(x, 18);
+                        display.print(tn);
+                        display.setTextSize(1);
+                    } else {
+                        display.setTextSize(2);
+                        const char* tn = TEAM_NAMES[ctx.respawnTeam - 1];
+                        uint8_t x = (SCREEN_WIDTH - (strlen(tn) * 12)) / 2;
+                        display.setCursor(x, 18);
+                        display.print(tn);
+                        display.setTextSize(1);
+                    }
+                }
+                // Liniile 3-4
+                uint8_t x;
+                if (ctx.queueCount > 0) {
                     char qBuf[20];
                     if (ctx.queueCount == 1)
                         strcpy(qBuf, "Queue: 1 player");
@@ -516,12 +571,6 @@ void drawPages(const PageContext& ctx) {
                     display.setCursor(x, 54);
                     display.print(pBuf);
                 } else if (limitReached) {
-                    display.setTextSize(2);
-                    const char* tn = TEAM_NAMES[ctx.respawnTeam - 1];
-                    uint8_t x = (SCREEN_WIDTH - (strlen(tn) * 12)) / 2;
-                    display.setCursor(x, 18);
-                    display.print(tn);
-                    display.setTextSize(1);
                     const char* l1 = "LIMIT REACHED!";
                     x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
                     display.setCursor(x, 42);
@@ -531,12 +580,6 @@ void drawPages(const PageContext& ctx) {
                     display.setCursor(x, 54);
                     display.print(l2);
                 } else {
-                    display.setTextSize(2);
-                    const char* tn = TEAM_NAMES[ctx.respawnTeam - 1];
-                    uint8_t x = (SCREEN_WIDTH - (strlen(tn) * 12)) / 2;
-                    display.setCursor(x, 18);
-                    display.print(tn);
-                    display.setTextSize(1);
                     const char* qb = "Queue: 0 players";
                     x = (SCREEN_WIDTH - (strlen(qb) * 6)) / 2;
                     display.setCursor(x, 42);
@@ -561,7 +604,7 @@ void drawPages(const PageContext& ctx) {
             if (ctx.selectedMode == 0)
                 localOwner = ctx.sectorOwner;
             else if (ctx.selectedMode == 1 && ctx.isBombArmed)
-                localOwner = ctx.bombOwner;
+                localOwner = ctx.sectorOwner;
             else if (ctx.selectedMode == 2)
                 localOwner = ctx.respawnTeam;
             for (uint8_t i = 0; i < 4; i++) {
@@ -594,7 +637,7 @@ void drawPages(const PageContext& ctx) {
             if (ctx.selectedMode == 0)
                 localOwner = ctx.sectorOwner;
             else if (ctx.selectedMode == 1 && ctx.isBombArmed)
-                localOwner = ctx.bombOwner;
+                localOwner = ctx.sectorOwner;
             else if (ctx.selectedMode == 2)
                 localOwner = ctx.respawnTeam;
             for (uint8_t i = 0; i < 4; i++) {
@@ -821,8 +864,10 @@ void drawPages(const PageContext& ctx) {
                 line2 = "By Conquest";
             else
                 line2 = "By Any";
+
             const char* line3 = "Time Left";
             char line4[25];
+
             if (ctx.isGamePaused) {
                 strcpy(line4, "** PAUSED **");
             } else if (ctx.isTimeOut) {
@@ -847,41 +892,41 @@ void drawPages(const PageContext& ctx) {
                 }
             }
 
-            // Hint buton — afisat doar pe aceasta pagina
+            // Construim hint-ul
             const char* hint = "";
             if (!ctx.isTimeOut) {
                 if (ctx.isGamePaused)
                     hint = "YELLOW to resume";
-                else if (ctx.isGameTimerRunning)
-                    hint = "YELLOW to pause";
+                else if (ctx.gameTimeLeftSeconds > 0 && !ctx.isGameTimerRunning)
+                    hint = "";  // line4 deja arata "YELLOW to START"
+                    else if (ctx.selectedMode != -1)
+                        hint = "YELLOW to pause";
             }
 
-            // Daca avem hint, comprimam layout-ul pentru a face loc
-            uint8_t y1, y2, y3, y4;
-            if (strlen(hint) > 0) {
-                y1 = 13; y2 = 24; y3 = 35; y4 = 46;
-            } else {
-                y1 = 15; y2 = 27; y3 = 41; y4 = 53;
-            }
-
+            // Afisam line1 si line2 (mereu vizibile)
             uint8_t x;
             x = (SCREEN_WIDTH - (strlen(line1) * 6)) / 2;
-            display.setCursor(x, y1);
+            display.setCursor(x, 15);
             display.print(line1);
             x = (SCREEN_WIDTH - (strlen(line2) * 6)) / 2;
-            display.setCursor(x, y2);
+            display.setCursor(x, 27);
             display.print(line2);
-            x = (SCREEN_WIDTH - (strlen(line3) * 6)) / 2;
-            display.setCursor(x, y3);
-            display.print(line3);
-            x = (SCREEN_WIDTH - (strlen(line4) * 6)) / 2;
-            display.setCursor(x, y4);
-            display.print(line4);
 
-            if (strlen(hint) > 0) {
-                uint8_t hx = (SCREEN_WIDTH - (strlen(hint) * 6)) / 2;
-                display.setCursor(hx, 57);
+            // Afisam line3 (mereu vizibil)
+            x = (SCREEN_WIDTH - (strlen(line3) * 6)) / 2;
+            display.setCursor(x, 41);
+            display.print(line3);
+
+            // line4 alterneaza cu hint la 3 secunde
+            bool showHint = (strlen(hint) > 0) && ((millis() / 3000) % 2 == 1);
+            if (showHint) {
+                x = (SCREEN_WIDTH - (strlen(hint) * 6)) / 2;
+                display.setCursor(x, 53);
                 display.print(hint);
+            } else {
+                x = (SCREEN_WIDTH - (strlen(line4) * 6)) / 2;
+                display.setCursor(x, 53);
+                display.print(line4);
             }
             break;
         }

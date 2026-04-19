@@ -64,7 +64,7 @@ static uint32_t retxStart = 0;
 static uint8_t s_gsTimeLimit, s_gsBonus, s_gsWinCond;
 static uint8_t s_bsTimerIdx, s_bsCooldownIdx, s_bsExpPtsIdx, s_bsDefPtsIdx;
 static uint8_t s_rsTimeIdx, s_rsPenaltyIdx, s_rsLimitIdx[4];
-static bool s_isRunning, s_isTimeOut;
+static bool s_isRunning, s_isTimeOut, s_isPaused;
 static uint32_t s_gameTimeLeft;
 static int32_t s_scores[4];
 static uint16_t s_kills[4];
@@ -83,6 +83,7 @@ uint8_t rx_rsLimitIdx[4] = {0};
 bool loraStartJustSent = false;
 bool loraPauseJustSent = false;
 bool loraResumeJustSent = false;
+bool loraSyncPaused = false;
 int32_t loraRxPenalties[4] = {0};
 bool loraSyncTimerReset = false;
 uint32_t loraStartGameTimeLeft = 0;
@@ -282,6 +283,7 @@ static void buildSync() {
     if (s_isRunning) flags |= 0x80;
     if (s_isTimeOut) flags |= 0x40;
     flags |= (s_gsWinCond & 0x03) << 4;
+    if (s_isPaused) flags |= 0x08;
     txBuf[14] = flags;
 
      txBuf[15] = (s_gameTimeLeft >> 24) & 0xFF;
@@ -510,6 +512,8 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         // Flags
         bool isRunning  = (buf[14] & 0x80) != 0;
         bool wasTimeOut = (buf[14] & 0x40) != 0;
+        bool wasPaused  = (buf[14] & 0x08) != 0;
+        loraSyncPaused = wasPaused;
 
         // Timp ramas
         uint32_t timeLeft = ((uint32_t)buf[15] << 24) |
@@ -927,7 +931,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             hasTransmittedThisMinute = true;
 
             if (isMasterNode && epochSyncTimer > 0 &&
-                now - epochSyncTimer >= 18000000 &&
+                now - epochSyncTimer >= 360000 &&
                 pendingEventType == EVT_NONE) {
                 buildEpochSync(gameTimeLeftSeconds);
                 } else {
@@ -949,7 +953,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
 // ============================================================
 // API public
 // ============================================================
-void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t penalties[4], uint32_t lastTimerTick) {
+void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, bool isPaused, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t penalties[4], uint32_t lastTimerTick) {
 
     const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
@@ -971,6 +975,7 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
     for (uint8_t i = 0; i < 4; i++) s_rsLimitIdx[i] = rsLimitIdx[i];
     s_isRunning = isRunning;
     s_isTimeOut = isOver;
+    s_isPaused = isPaused;
     s_gameTimeLeft = gameTimeLeft;
     s_lastTimerTick = lastTimerTick;
     for (uint8_t i = 0; i < 4; i++) {

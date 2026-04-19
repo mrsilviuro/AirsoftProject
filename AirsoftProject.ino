@@ -324,6 +324,7 @@ void buildContext() {
     ctx.isGameTimerRunning = isGameTimerRunning;
     ctx.gameTimeLeftSeconds = gameTimeLeftSeconds;
     ctx.isGamePaused = isGamePaused;
+    ctx.pauseStartTime = pauseStartTime;
 
     // Sector — date REALE
     ctx.sectorOwner = sectorOwner;
@@ -334,7 +335,6 @@ void buildContext() {
     // Bomb (placeholder)
     ctx.isBombArmed = isBombArmed;
     ctx.isCooldownActive = isCooldownActive;
-    ctx.bombOwner = bombOwner;
     ctx.bombPlantTime = bombPlantTime;
     ctx.bombTimerMs = bombTimerMs;
     ctx.cooldownStartTime = cooldownStartTime;
@@ -656,6 +656,11 @@ void loop() {
                         teamMaxRespawns[i] = lm[rsLimitIdx[i]];
 
         needsDisplayUpdate = true;
+        if (loraSyncPaused && !isGamePaused) {
+            applyGamePause();
+        } else if (!loraSyncPaused && isGamePaused) {
+            applyGameResume();
+        }
         Serial.println("[SYNC] Setari aplicate de la master.");
     }
 
@@ -1497,12 +1502,12 @@ void onShortPress(uint8_t btnIndex) {
                 bsExpPtsIdx, bsDefPtsIdx,
                 rsTimeIdx, rsPenaltyIdx,
                 rsLimitIdx,
-                isGameTimerRunning, isTimeOut,
+                isGameTimerRunning, isTimeOut, isGamePaused,
                 gameTimeLeftSeconds,
                 liveScore,
                 teamKills,
                 appliedPenalties,
-                lastTimerTick  // ← adauga doar asta
+                lastTimerTick
             );
             syncingStartTime = millis();
             currentState = STATE_SYNC_RECEIVED;

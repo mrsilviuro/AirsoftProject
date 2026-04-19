@@ -75,6 +75,7 @@ extern bool loraStartJustSent;
 
 extern bool loraPauseJustSent;
 extern bool loraResumeJustSent;
+extern bool loraSyncPaused;
 
 // ============================================================
 // Initializare
@@ -112,10 +113,10 @@ void loraSendSync(
     uint8_t  bsExpPtsIdx, uint8_t bsDefPtsIdx,
     uint8_t  rsTimeIdx,   uint8_t rsPenaltyIdx,
     uint8_t  rsLimitIdx[4],
-    bool     isRunning,   bool isTimeOut,
+    bool     isRunning,   bool isTimeOut, bool isPaused,
     uint32_t gameTimeLeft,
     int32_t  scores[4],   uint16_t kills[4], int32_t penalties[4],
-    uint32_t lastTimerTick  // ← adauga doar asta
+    uint32_t lastTimerTick
 );
 
 // Returneaza true daca am primit comanda de restart global
