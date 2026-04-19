@@ -846,36 +846,45 @@ void drawPages(const PageContext& ctx) {
                         snprintf(line4, sizeof(line4), "%usec", s);
                 }
             }
+
+            // Hint buton — afisat doar pe aceasta pagina
+            const char* hint = "";
+            if (!ctx.isTimeOut) {
+                if (ctx.isGamePaused)
+                    hint = "YELLOW to resume";
+                else if (ctx.isGameTimerRunning)
+                    hint = "YELLOW to pause";
+            }
+
+            // Daca avem hint, comprimam layout-ul pentru a face loc
+            uint8_t y1, y2, y3, y4;
+            if (strlen(hint) > 0) {
+                y1 = 13; y2 = 24; y3 = 35; y4 = 46;
+            } else {
+                y1 = 15; y2 = 27; y3 = 41; y4 = 53;
+            }
+
             uint8_t x;
             x = (SCREEN_WIDTH - (strlen(line1) * 6)) / 2;
-            display.setCursor(x, 15);
+            display.setCursor(x, y1);
             display.print(line1);
             x = (SCREEN_WIDTH - (strlen(line2) * 6)) / 2;
-            display.setCursor(x, 27);
+            display.setCursor(x, y2);
             display.print(line2);
             x = (SCREEN_WIDTH - (strlen(line3) * 6)) / 2;
-            display.setCursor(x, 41);
+            display.setCursor(x, y3);
             display.print(line3);
             x = (SCREEN_WIDTH - (strlen(line4) * 6)) / 2;
-            display.setCursor(x, 53);
+            display.setCursor(x, y4);
             display.print(line4);
+
+            if (strlen(hint) > 0) {
+                uint8_t hx = (SCREEN_WIDTH - (strlen(hint) * 6)) / 2;
+                display.setCursor(hx, 57);
+                display.print(hint);
+            }
             break;
         }
-    }
-    // Hint buton
-    const char* hint = "";
-    if (!ctx.isTimeOut) {
-        if (ctx.isGamePaused)
-            hint = "YELLOW to resume";
-        else if (ctx.gameTimeLeftSeconds > 0 && !ctx.isGameTimerRunning)
-            hint = "YELLOW to start";
-        else if (ctx.isGameTimerRunning || ctx.gameTimeLeftSeconds == 0)
-            hint = "YELLOW to pause";
-    }
-    if (strlen(hint) > 0) {
-        uint8_t hx = (SCREEN_WIDTH - (strlen(hint) * 6)) / 2;
-        display.setCursor(hx, 56);
-        display.print(hint);
     }
     display.display();
 }
