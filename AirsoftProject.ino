@@ -98,7 +98,8 @@ uint32_t syncingStartTime = 0;
 uint32_t syncedScreenStart = 0;
 
 // Indecsi setari
-uint8_t gsIndex = 0, gsWinCond = 0, gsTimeLimit = 0, gsBonus = 2;
+uint8_t gsIndex = 0, gsWinCond = 0, gsTimeLimit = 0, gsBonus = 2, gsActionIdx = 2;
+uint32_t actionTimeMs = 15000;
 uint8_t bsIndex = 0, bsTimerIdx = 2, bsCooldownIdx = 3;
 uint8_t bsExpPtsIdx = 6, bsDefPtsIdx = 3;
 uint8_t rsIndex = 0, rsTimeIdx = 6, rsPenaltyIdx = 3;
@@ -120,6 +121,11 @@ uint32_t pauseStartTime = 0;
 uint32_t loraPausePendingTime = 0;
 uint32_t loraResumePendingTime = 0;
 uint8_t pendingAdminAction = 0;  // 0=start, 1=pause, 2=resume
+uint32_t killResetAdminStart = 0;
+uint8_t killResetWinnerTeam = 255;
+uint16_t killResetPoints = 0;
+bool killResetHasPoints = false;
+uint32_t killResetDoneStart = 0;
 
 AdminContext buildAdminContext() {
     AdminContext ac;
@@ -128,6 +134,7 @@ AdminContext buildAdminContext() {
     ac.gsWinCond = gsWinCond;
     ac.gsTimeLimit = gsTimeLimit;
     ac.gsBonus = gsBonus;
+    ac.gsActionIdx = gsActionIdx;
     ac.bsIndex = bsIndex;
     ac.bsTimerIdx = bsTimerIdx;
     ac.bsCooldownIdx = bsCooldownIdx;
@@ -219,7 +226,7 @@ void handleActionProgress() {
     }
 
     // 2. Timp atins? — SUCCESS
-    if (elapsed >= ACTION_TIME_MS) {
+    if (elapsed >= actionTimeMs) {
         // Aplicam efectul actiunii
         if (currentAction == ACT_CAPTURE) {
             sectorOwner = (Team)(actingTeam + 1);
@@ -272,7 +279,7 @@ void handleActionProgress() {
     }
 
     // 3. Actiunea e in desfasurare — redesenam bara de progres
-    drawActionScreen(currentAction, actingTeam, elapsed, ACTION_TIME_MS);
+    drawActionScreen(currentAction, actingTeam, elapsed, actionTimeMs);
 }
 
 // ============================================================
@@ -309,6 +316,20 @@ void applyGameResume() {
     Serial.print("[GAME] RESUMED! Pauza: ");
     Serial.print(pauseDuration / 1000);
     Serial.println("s");
+}
+
+// ============================================================
+// applyKillsReset()
+// ============================================================
+void applyKillsReset() {
+    for (uint8_t i = 0; i < 4; i++) teamKills[i] = 0;
+    // Golim coada respawn
+    queueCount = 0;
+    queueHead = 0;
+    queueTail = 0;
+    memset(respawnQueue, 0, sizeof(respawnQueue));
+    needsDisplayUpdate = true;
+    Serial.println("[KILLS] Reset kill-uri si coada respawn!");
 }
 
 // ============================================================
@@ -478,6 +499,10 @@ void syncAdminIndices() {
 
             gsWinCond = (uint8_t)currentWinCondition;
 
+        const uint32_t at[] = {5000, 10000, 15000, 20000};
+        for (uint8_t i = 0; i < 4; i++)
+            if (at[i] == actionTimeMs) { gsActionIdx = i; break; }
+
         // Bomb Settings
         const uint32_t tv[] = {5, 10, 15, 20, 30, 45, 60, 120};
         for (uint8_t i = 0; i < 8; i++)
@@ -618,6 +643,11 @@ void loop() {
         if (isGamePaused) applyGameResume();
     }
 
+    if (loraKillsResetReceived) {
+        loraKillsResetReceived = false;
+        applyKillsReset();
+    }
+
     if (loraSettingsReceived) {
         loraSettingsReceived = false;
 
@@ -654,6 +684,9 @@ void loop() {
                     respawnPenaltyPoints = pp[rsPenaltyIdx];
                     for (uint8_t i = 0; i < 4; i++)
                         teamMaxRespawns[i] = lm[rsLimitIdx[i]];
+        const uint32_t at[] = {5000, 10000, 15000, 20000};
+        gsActionIdx = rx_gsActionIdx;
+        actionTimeMs = at[gsActionIdx];
 
         needsDisplayUpdate = true;
         if (loraSyncPaused && !isGamePaused) {
@@ -1094,6 +1127,77 @@ void loop() {
             }
             break;
 
+        case STATE_KILL_RESET_ADMIN: {
+            if (needsDisplayUpdate) {
+                drawKillResetAdminScreen();
+                needsDisplayUpdate = false;
+            }
+            // Timeout 3 secunde
+            if (millis() - killResetAdminStart >= 3000) {
+                currentState = STATE_PAGES;
+                currentPage = 2;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 200, 300);
+            }
+            // Citim RFID
+            if (millis() - lastRfidRead >= 300) {
+                Wire.end();
+                RfidReadData rfid = rfidReadTag();
+                Wire.begin();
+                lastRfidRead = millis();
+                if (rfid.result == RFID_READ_ADMIN) {
+                    tone(PIN_BUZZER, 1500, 200);
+                    // Calculam cate echipe au limita
+                    uint8_t teamsWithLimit = 0;
+                    for (uint8_t i = 0; i < 4; i++)
+                        if (teamMaxRespawns[i] > 0) teamsWithLimit++;
+                        if (teamsWithLimit >= 2) {
+                            // Intrebam daca vrem puncte
+                            currentState = STATE_KILL_RESET_CONFIRM;
+                        } else {
+                            // Reset direct
+                            loraSendUrgent(EVT_KILLS_RESET, 0);
+                            applyKillsReset();
+                            killResetHasPoints = false;
+                            killResetDoneStart = millis();
+                            currentState = STATE_KILL_RESET_DONE;
+                        }
+                        needsDisplayUpdate = true;
+                }
+            }
+            handleButtons();
+            break;
+        }
+
+        case STATE_KILL_RESET_CONFIRM:
+            if (needsDisplayUpdate) {
+                drawKillResetConfirmScreen();
+                needsDisplayUpdate = false;
+            }
+            handleButtons();
+            break;
+
+        case STATE_KILL_RESET_WINNER:
+            if (needsDisplayUpdate) {
+                drawKillResetWinnerScreen();
+                needsDisplayUpdate = false;
+                // Aprindem LED-urile echipelor cu limita
+                for (uint8_t i = 0; i < 4; i++)
+                    digitalWrite(PIN_LEDS[i], teamMaxRespawns[i] > 0 ? HIGH : LOW);
+            }
+            handleButtons();
+            break;
+
+        case STATE_KILL_RESET_DONE:
+            drawKillResetDoneScreen(killResetPoints, killResetWinnerTeam, killResetHasPoints);
+            if (millis() - killResetDoneStart >= 2000) {
+                refreshLEDs();
+                currentState = STATE_PAGES;
+                currentPage = 2;
+                needsDisplayUpdate = true;
+            }
+            break;
+
         case STATE_ADMIN_TAG_WRITE: {
             // Timeout 3 secunde
             if (tagStatusMsg == 0 && millis() - tagWaitStart >= 3000) {
@@ -1260,10 +1364,22 @@ void onShortPress(uint8_t btnIndex) {
                 int32_t penalizare = min((int32_t)respawnPenaltyPoints,
                                          liveScore[respawnTeam - 1] - appliedPenalties[respawnTeam - 1]);
                 if (penalizare > 0) appliedPenalties[respawnTeam - 1] += penalizare;
-                tone(PIN_BUZZER, 1200, 100);
                 needsDisplayUpdate = true;
                 Serial.print("[RESPAWN] Kill inregistrat. Queue: ");
                 Serial.println(queueCount);
+
+                // Verificam daca s-a atins limita de respawn-uri
+                if (teamMaxRespawns[respawnTeam - 1] > 0 &&
+                    teamKills[respawnTeam - 1] >= teamMaxRespawns[respawnTeam - 1]) {
+                    // Ultimul kill — releu + ton lung
+                    digitalWrite(PIN_RELAY, LOW);
+                isRelayActive = true;
+                relayTurnOffTime = millis() + 3000;
+                tone(PIN_BUZZER, 1800, 600);
+                Serial.println("[RESPAWN] LIMIT REACHED! Releu activat.");
+                    } else {
+                        tone(PIN_BUZZER, 1200, 100);
+                    }
             } else if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
                 tone(PIN_BUZZER, 200, 200);
             } else if (limitReached) {
@@ -1281,7 +1397,13 @@ void onShortPress(uint8_t btnIndex) {
             currentPage = (currentPage >= 5) ? 0 : currentPage + 1;
             needsDisplayUpdate = true;
         } else if (btnIndex == 2) {
-            if (currentPage == 3) {
+            if (currentPage == 2) {
+                // Verde pe pagina 3 — Kill Reset
+                killResetAdminStart = millis();
+                currentState = STATE_KILL_RESET_ADMIN;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 1000, 100);
+            } else if (currentPage == 3) {
                 ctx.page4ScrollIndex++;
                 needsDisplayUpdate = true;
             } else if (currentPage == 4) {
@@ -1391,7 +1513,7 @@ void onShortPress(uint8_t btnIndex) {
 
         if (adminSelectedPage == 0) {
             if (btnIndex == 2) {
-                gsIndex = (gsIndex + 1) % 4;
+                gsIndex = (gsIndex + 1) % 5;
                 needsDisplayUpdate = true;
             } else if (btnIndex == 3) {
                 if (gsIndex == 0)
@@ -1400,13 +1522,17 @@ void onShortPress(uint8_t btnIndex) {
                     gsTimeLimit = (gsTimeLimit + 1) % 15;
                 else if (gsIndex == 2)
                     gsBonus = (gsBonus + 1) % 7;
-                else if (gsIndex == 3) {
+                else if (gsIndex == 3)
+                    gsActionIdx = (gsActionIdx + 1) % 4;
+                else if (gsIndex == 4) {
                     // CONFIRM
                     const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400, 18000, 21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
                     const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
                     gameTimeLeftSeconds = tl[gsTimeLimit];
                     bonusIntervalMinutes = bn[gsBonus];
                     currentWinCondition = (WinCondition)gsWinCond;
+                    const uint32_t at[] = {5000, 10000, 15000, 20000};
+                    actionTimeMs = at[gsActionIdx];
                     adminSavedTime = millis();
                     tone(PIN_BUZZER, 1500, 300);
                     currentState = STATE_ADMIN_SAVED;
@@ -1484,6 +1610,44 @@ void onShortPress(uint8_t btnIndex) {
                 }
             }
         }
+    } else if (currentState == STATE_KILL_RESET_CONFIRM) {
+        if (btnIndex == 0) {
+            // RED — No, reset direct fara puncte
+            loraSendUrgent(EVT_KILLS_RESET, 0);
+            applyKillsReset();
+            killResetHasPoints = false;
+            killResetDoneStart = millis();
+            currentState = STATE_KILL_RESET_DONE;
+            needsDisplayUpdate = true;
+        } else if (btnIndex == 1) {
+            // BLUE — Yes, selectam winnerul
+            currentState = STATE_KILL_RESET_WINNER;
+            needsDisplayUpdate = true;
+        }
+
+    } else if (currentState == STATE_KILL_RESET_WINNER) {
+        // Acceptam doar butoanele echipelor cu limita
+        if (btnIndex < 4 && teamMaxRespawns[btnIndex] > 0) {
+            killResetWinnerTeam = btnIndex;
+            // Calculam punctele
+            uint16_t pts = 0;
+            if (teamKills[btnIndex] < teamMaxRespawns[btnIndex])
+                pts = (teamMaxRespawns[btnIndex] - teamKills[btnIndex]) * 10;
+            killResetPoints = pts;
+            killResetHasPoints = true;
+            if (pts > 0) liveScore[btnIndex] += pts;
+            // Reset kill-uri + queue + transmisie
+            loraSendUrgent(EVT_KILLS_RESET, 0);
+            applyKillsReset();
+            killResetDoneStart = millis();
+            currentState = STATE_KILL_RESET_DONE;
+            needsDisplayUpdate = true;
+            tone(PIN_BUZZER, 1500, 300);
+            Serial.print("[KILLS] Winner: ");
+            Serial.print(TEAM_NAMES[btnIndex]);
+            Serial.print(" +");
+            Serial.println(pts);
+        }
     } else if (currentState == STATE_WAIT_ADMIN_TAG) {
         if (btnIndex == 0) {  // RED — anulare
             currentState = STATE_PAGES;
@@ -1502,7 +1666,7 @@ void onShortPress(uint8_t btnIndex) {
                 bsExpPtsIdx, bsDefPtsIdx,
                 rsTimeIdx, rsPenaltyIdx,
                 rsLimitIdx,
-                isGameTimerRunning, isTimeOut, isGamePaused,
+                isGameTimerRunning, isTimeOut, isGamePaused, gsActionIdx,
                 gameTimeLeftSeconds,
                 liveScore,
                 teamKills,

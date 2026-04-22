@@ -56,7 +56,6 @@ const uint8_t PIN_BTNS[4] = { 13, 14, 26, 27 };
 // ============================================================
 #define DEBOUNCE_DELAY_MS 50
 #define LONG_PRESS_MS 1000
-#define ACTION_TIME_MS 15000
 #define RELAY_DURATION_MS 20000
 
 // ============================================================

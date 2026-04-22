@@ -137,6 +137,7 @@ struct AdminContext {
     uint8_t gsWinCond;
     uint8_t gsTimeLimit;
     uint8_t gsBonus;
+    uint8_t gsActionIdx;
 
     // Bomb Settings
     uint8_t bsIndex;
@@ -172,6 +173,10 @@ void drawTagWriter(uint8_t statusMsg);
 void drawScrollbar(uint8_t totalItems, uint8_t visibleItems, uint8_t scrollIndex, uint8_t yStart, uint8_t barHeight);
 
 void drawSyncWarningScreen();
+void drawKillResetAdminScreen();
+void drawKillResetConfirmScreen();
+void drawKillResetWinnerScreen();
+void drawKillResetDoneScreen(uint16_t points, uint8_t teamIndex, bool hasPoints);
 void drawSyncingScreen();
 
 void displayRefreshRegisters();

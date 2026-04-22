@@ -65,6 +65,7 @@ static uint8_t s_gsTimeLimit, s_gsBonus, s_gsWinCond;
 static uint8_t s_bsTimerIdx, s_bsCooldownIdx, s_bsExpPtsIdx, s_bsDefPtsIdx;
 static uint8_t s_rsTimeIdx, s_rsPenaltyIdx, s_rsLimitIdx[4];
 static bool s_isRunning, s_isTimeOut, s_isPaused;
+static uint8_t s_gsActionIdx = 2;
 static uint32_t s_gameTimeLeft;
 static int32_t s_scores[4];
 static uint16_t s_kills[4];
@@ -79,11 +80,13 @@ uint8_t rx_bsTimerIdx = 0, rx_bsCooldownIdx = 0;
 uint8_t rx_bsExpPtsIdx = 0, rx_bsDefPtsIdx = 0;
 uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
 uint8_t rx_rsLimitIdx[4] = {0};
+uint8_t rx_gsActionIdx = 2;
 
 bool loraStartJustSent = false;
 bool loraPauseJustSent = false;
 bool loraResumeJustSent = false;
 bool loraSyncPaused = false;
+bool loraKillsResetReceived = false;
 int32_t loraRxPenalties[4] = {0};
 bool loraSyncTimerReset = false;
 uint32_t loraStartGameTimeLeft = 0;
@@ -284,6 +287,7 @@ static void buildSync() {
     if (s_isTimeOut) flags |= 0x40;
     flags |= (s_gsWinCond & 0x03) << 4;
     if (s_isPaused) flags |= 0x08;
+    flags |= (s_gsActionIdx & 0x03);
     txBuf[14] = flags;
 
      txBuf[15] = (s_gameTimeLeft >> 24) & 0xFF;
@@ -513,6 +517,7 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         bool isRunning  = (buf[14] & 0x80) != 0;
         bool wasTimeOut = (buf[14] & 0x40) != 0;
         bool wasPaused  = (buf[14] & 0x08) != 0;
+        rx_gsActionIdx = buf[14] & 0x03;
         loraSyncPaused = wasPaused;
 
         // Timp ramas
@@ -647,6 +652,8 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
                 loraPauseJustSent = true;
             } else if (piggy == EVT_GAME_RESUMED) {
                 loraResumeJustSent = true;
+            } else if (piggy == EVT_KILLS_RESET) {
+                loraKillsResetReceived = true;
             }
         }
     } else if (pktType == PKT_URGENT) {
@@ -695,6 +702,9 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         } else if (eType == EVT_GAME_RESUMED) {
             loraResumeJustSent = true;
             Serial.println("[LORA] RESUME primit!");
+        } else if (eType == EVT_KILLS_RESET) {
+            loraKillsResetReceived = true;
+            Serial.println("[LORA] KILLS RESET primit!");
         }
 
     } else if (pktType == PKT_EPOCH_SYNC) {
@@ -953,7 +963,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
 // ============================================================
 // API public
 // ============================================================
-void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, bool isPaused, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t penalties[4], uint32_t lastTimerTick) {
+void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, bool isPaused, uint8_t gsActionIdx, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t penalties[4], uint32_t lastTimerTick) {
 
     const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
@@ -976,6 +986,7 @@ void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8
     s_isRunning = isRunning;
     s_isTimeOut = isOver;
     s_isPaused = isPaused;
+    s_gsActionIdx = gsActionIdx;
     s_gameTimeLeft = gameTimeLeft;
     s_lastTimerTick = lastTimerTick;
     for (uint8_t i = 0; i < 4; i++) {

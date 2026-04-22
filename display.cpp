@@ -999,11 +999,19 @@ void drawAdminPages(const AdminContext& ac) {
         x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
         display.setCursor(x, 78 + yOff);
         display.print(buf);
-        snprintf(buf, sizeof(buf), ac.gsIndex == 3 ? "> CONFIRM <" : "CONFIRM");
-        x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
+        x = (SCREEN_WIDTH - (11 * 6)) / 2;
         display.setCursor(x, 95 + yOff);
+        display.print("Action Time");
+        const char* const aT[] = {"5 sec", "10 sec", "15 sec", "20 sec"};
+        snprintf(buf, sizeof(buf), ac.gsIndex == 3 ? "> %s <" : "%s", aT[ac.gsActionIdx]);
+        x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
+        display.setCursor(x, 105 + yOff);
         display.print(buf);
-        drawScrollbar(4, 1, ac.gsIndex, 13, 51);
+        snprintf(buf, sizeof(buf), ac.gsIndex == 4 ? "> CONFIRM <" : "CONFIRM");
+        x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
+        display.setCursor(x, 122 + yOff);
+        display.print(buf);
+        drawScrollbar(5, 1, ac.gsIndex, 13, 51);
     } else if (ac.selectedPage == 1) {
         // --- BOMB SETTINGS ---
         const char* const tT[] = {"5 min", "10 min", "15 min", "20 min", "30 min", "45 min", "1 hour", "2 hours"};
@@ -1305,5 +1313,78 @@ void drawSyncedScreen(uint8_t fromUnitId) {
     display.setCursor(x, 44);
     display.print(buf);
 
+    display.display();
+}
+
+void drawKillResetAdminScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "Please present";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setCursor(x, 20);
+    display.print(l1);
+    const char* l2 = "Admin tag ...";
+    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
+    display.setCursor(x, 32);
+    display.print(l2);
+    display.display();
+}
+
+void drawKillResetConfirmScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "Do you want to";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setCursor(x, 14);
+    display.print(l1);
+    const char* l2 = "offer points?";
+    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
+    display.setCursor(x, 26);
+    display.print(l2);
+    const char* l3 = "Red: No     Blue: Yes";
+    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
+    display.setCursor(x, 50);
+    display.print(l3);
+    display.display();
+}
+
+void drawKillResetWinnerScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "Select the";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setCursor(x, 18);
+    display.print(l1);
+    const char* l2 = "WINNER!";
+    display.setTextSize(2);
+    x = (SCREEN_WIDTH - (strlen(l2) * 12)) / 2;
+    display.setCursor(x, 32);
+    display.print(l2);
+    display.display();
+}
+
+void drawKillResetDoneScreen(uint16_t points, uint8_t teamIndex, bool hasPoints) {
+    display.clearDisplay();
+    display.setTextSize(2);
+    const char* msg = "DONE";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 12)) / 2;
+    display.setCursor(x, 16);
+    display.print(msg);
+    if (hasPoints && points > 0) {
+        display.setTextSize(1);
+        char buf[25];
+        snprintf(buf, sizeof(buf), "+%u", points);
+        uint8_t pw = strlen(buf) * 6;
+        uint8_t totalW = pw + 2 + 7;
+        uint8_t sx = (SCREEN_WIDTH - totalW) / 2;
+        display.setCursor(sx, 40);
+        display.print(buf);
+        display.drawBitmap(sx + pw + 2, 40, POINT_BMP, 7, 7, SSD1306_WHITE);
+        char team[20];
+        snprintf(team, sizeof(team), "for %s", TEAM_NAMES[teamIndex]);
+        x = (SCREEN_WIDTH - (strlen(team) * 6)) / 2;
+        display.setCursor(x, 52);
+        display.print(team);
+    }
     display.display();
 }

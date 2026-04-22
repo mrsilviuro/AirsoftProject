@@ -32,6 +32,7 @@
 #define EVT_MODE_UNSET      9
 #define EVT_GAME_PAUSED     10
 #define EVT_GAME_RESUMED    11
+#define EVT_KILLS_RESET     12
 
 // ============================================================
 // Stare retea — accesibila din .ino
@@ -70,12 +71,14 @@ extern uint8_t rx_bsTimerIdx, rx_bsCooldownIdx;
 extern uint8_t rx_bsExpPtsIdx, rx_bsDefPtsIdx;
 extern uint8_t rx_rsTimeIdx, rx_rsPenaltyIdx;
 extern uint8_t rx_rsLimitIdx[4];
+extern uint8_t rx_gsActionIdx;
 
 extern bool loraStartJustSent;
 
 extern bool loraPauseJustSent;
 extern bool loraResumeJustSent;
 extern bool loraSyncPaused;
+extern bool loraKillsResetReceived;
 
 // ============================================================
 // Initializare
@@ -113,7 +116,7 @@ void loraSendSync(
     uint8_t  bsExpPtsIdx, uint8_t bsDefPtsIdx,
     uint8_t  rsTimeIdx,   uint8_t rsPenaltyIdx,
     uint8_t  rsLimitIdx[4],
-    bool     isRunning,   bool isTimeOut, bool isPaused,
+    bool     isRunning,   bool isTimeOut, bool isPaused, uint8_t gsActionIdx,
     uint32_t gameTimeLeft,
     int32_t  scores[4],   uint16_t kills[4], int32_t penalties[4],
     uint32_t lastTimerTick
