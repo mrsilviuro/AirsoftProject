@@ -115,6 +115,10 @@ enum GameState : uint8_t {
   STATE_LOADING,
   STATE_READY,
   STATE_SYNCED_RECEIVED
+  STATE_KILL_RESET_ADMIN,
+  STATE_KILL_RESET_CONFIRM,
+  STATE_KILL_RESET_WINNER,
+  STATE_KILL_RESET_DONE
 };
 
 // ============================================================
