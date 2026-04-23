@@ -90,6 +90,7 @@ uint8_t rx_gsActionIdx = 2;
 
 bool loraSyncPaused = false;
 bool loraKillsResetReceived = false;
+bool loraTimeResetReceived = false;
 int32_t loraRxPenalties[4] = {0};
 bool loraSyncTimerReset = false;
 uint32_t loraStartGameTimeLeft = 0;
@@ -685,6 +686,8 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
                 loraResumeApplyNow = true;
             } else if (piggy == EVT_KILLS_RESET) {
                 loraKillsResetReceived = true;
+            } else if (piggy == EVT_TIME_RESET) {
+                loraTimeResetReceived = true;
             }
         }
     } else if (pktType == PKT_URGENT) {
@@ -747,6 +750,9 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         } else if (eType == EVT_KILLS_RESET) {
             loraKillsResetReceived = true;
             Serial.println("[LORA] KILLS RESET primit!");
+        } else if (eType == EVT_TIME_RESET) {
+            loraTimeResetReceived = true;
+            Serial.println("[LORA] TIME RESET primit!");
         }
 
     } else if (pktType == PKT_EPOCH_SYNC) {
@@ -831,17 +837,18 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             if (rxCount == 4) {
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
-                // Extindem rxLen pentru PKT_URGENT cu timp (PAUSE = 11 bytes)
-                if (rxCount == 6 && rxBuf[3] == PKT_URGENT) {
-                    uint8_t teamIdByte = rxBuf[5] & 0x0F;
-                    if (teamIdByte == 0x0F) rxLen = 11;
-                }
                 if      (pktType == PKT_SYNC)       rxLen = 62;
                 else if (pktType == PKT_HEARTBEAT)  rxLen = 48;
                 else if (pktType == PKT_START)      rxLen = 10;
                 else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
                 else if (pktType == PKT_RESTART)    rxLen = 6;
                 else if (pktType == PKT_CONQUEST)   rxLen = 7;
+            }
+
+            // Extindem rxLen pentru PKT_URGENT PAUSE (11 bytes) — dupa ce avem byte 5
+            if (rxCount == 6 && rxBuf[3] == PKT_URGENT) {
+                uint8_t teamIdByte = rxBuf[5] & 0x0F;
+                if (teamIdByte == 0x0F) rxLen = 11;
             }
 
             // Am primit pachetul complet?
@@ -994,7 +1001,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             hasTransmittedThisMinute = true;
 
             if (isMasterNode && epochSyncTimer > 0 &&
-                now - epochSyncTimer >= 3600000 &&
+                now - epochSyncTimer >= 1800000 &&
                 pendingEventType == EVT_NONE) {
                 buildEpochSync(gameTimeLeftSeconds);
                 } else {

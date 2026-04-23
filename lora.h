@@ -33,6 +33,7 @@
 #define EVT_GAME_PAUSED     10
 #define EVT_GAME_RESUMED    11
 #define EVT_KILLS_RESET     12
+#define EVT_TIME_RESET      13
 
 // ============================================================
 // Stare retea — accesibila din .ino
@@ -75,6 +76,7 @@ extern uint8_t rx_gsActionIdx;
 
 extern bool loraSyncPaused;
 extern bool loraKillsResetReceived;
+extern bool loraTimeResetReceived;
 extern bool loraTimerFrozen;
 extern bool   loraStartApplyNow;
 extern bool   loraPauseApplyNow;

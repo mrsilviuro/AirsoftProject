@@ -124,6 +124,8 @@ uint8_t killResetWinnerTeam = 255;
 uint16_t killResetPoints = 0;
 bool killResetHasPoints = false;
 uint32_t killResetDoneStart = 0;
+uint32_t timeResetAdminStart = 0;
+uint32_t timeResetDoneStart = 0;
 
 AdminContext buildAdminContext() {
     AdminContext ac;
@@ -330,6 +332,61 @@ void applyKillsReset() {
     for (uint8_t i = 0; i < 4; i++) loraRxKills[i] = 0;
     needsDisplayUpdate = true;
     Serial.println("[KILLS] Reset kill-uri si coada respawn!");
+}
+
+// ============================================================
+// applyTimeReset()
+// ============================================================
+void applyTimeReset() {
+    // Daca era pe pauza, rezolvam mai intai timpii absoluti
+    if (isGamePaused) {
+        applyGameResume();
+        isGamePaused = false;
+    }
+
+    // Oprim jocul
+    isGameTimerRunning = false;
+    isTimeOut = false;
+    conquestWinner = TEAM_NEUTRAL;
+
+    // Reincarcam timpul original din gsTimeLimit
+    const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400,
+        18000, 21600, 25200, 28800, 32400,
+        36000, 39600, 43200, 86400};
+        gameTimeLeftSeconds = tl[gsTimeLimit];
+
+        // Reset sector
+        sectorOwner = TEAM_NEUTRAL;
+        captureStartTime = 0;
+        currentCapturePoints = 0;
+        lastPointTick = 0;
+
+        // Reset bomba
+        isBombArmed = false;
+        bombOwner = TEAM_NEUTRAL;
+        bombPlantTime = 0;
+        isCooldownActive = false;
+        cooldownStartTime = 0;
+
+        // Reset respawn queue (kill-urile raman)
+        queueCount = 0;
+        queueHead = 0;
+        queueTail = 0;
+        memset(respawnQueue, 0, sizeof(respawnQueue));
+
+        // Oprim relay daca era activ
+        if (isRelayActive) {
+            digitalWrite(PIN_RELAY, HIGH);
+            isRelayActive = false;
+            relayTurnOffTime = 0;
+        }
+
+        // Oprim buzzer daca suna (timeout/bomba)
+        noTone(PIN_BUZZER);
+
+        currentPage = 5;  // ramane pe pagina 6
+        needsDisplayUpdate = true;
+        Serial.println("[TIME RESET] Timp resetat!");
 }
 
 // ============================================================
@@ -627,6 +684,11 @@ void loop() {
     if (loraKillsResetReceived) {
         loraKillsResetReceived = false;
         applyKillsReset();
+    }
+
+    if (loraTimeResetReceived) {
+        loraTimeResetReceived = false;
+        applyTimeReset();
     }
 
     if (loraSettingsReceived) {
@@ -1109,6 +1171,41 @@ void loop() {
             }
             break;
 
+        case STATE_TIME_RESET_ADMIN: {
+            if (needsDisplayUpdate) {
+                // Refolosim ecranul de admin tag — acelasi mesaj
+                drawKillResetAdminScreen();
+                needsDisplayUpdate = false;
+            }
+            // Timeout 3 secunde
+            if (millis() - timeResetAdminStart >= 3000) {
+                currentState = STATE_PAGES;
+                currentPage = 5;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 200, 300);
+            }
+            // Citim RFID
+            if (millis() - lastRfidRead >= 300) {
+                Wire.end();
+                RfidReadData rfid = rfidReadTag();
+                Wire.begin();
+                lastRfidRead = millis();
+                if (rfid.result == RFID_READ_ADMIN) {
+                    tone(PIN_BUZZER, 1500, 300);
+                    loraSendUrgent(EVT_TIME_RESET, 0);
+                    applyTimeReset();
+                    timeResetDoneStart = millis();
+                    currentState = STATE_KILL_RESET_DONE;
+                    killResetHasPoints = false;
+                    killResetPoints = 0;
+                    killResetWinnerTeam = 255;
+                    needsDisplayUpdate = true;
+                }
+            }
+            handleButtons();
+            break;
+        }
+
         case STATE_KILL_RESET_ADMIN: {
             if (needsDisplayUpdate) {
                 drawKillResetAdminScreen();
@@ -1392,6 +1489,18 @@ void onShortPress(uint8_t btnIndex) {
                 ctx.page5ScrollIndex++;
                 needsDisplayUpdate = true;
             }
+        } else if (btnIndex == 2 && currentPage == 5) {
+            // VERDE pe pagina 6 — Time Reset
+            if (gsTimeLimit == 0 || gameTimeLeftSeconds == 0 && !isGameTimerRunning && !isTimeOut) {
+                // Fara timp setat sau timp nesetat — beep eroare
+                tone(PIN_BUZZER, 200, 300);
+            } else {
+                timeResetAdminStart = millis();
+                currentState = STATE_TIME_RESET_ADMIN;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 1000, 100);
+            }
+            return;
         } else if (btnIndex == 3 && currentPage == 5) {
             // YELLOW pe pagina 6 — cerem card admin pentru start
             if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
