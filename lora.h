@@ -73,8 +73,6 @@ extern uint8_t rx_rsTimeIdx, rx_rsPenaltyIdx;
 extern uint8_t rx_rsLimitIdx[4];
 extern uint8_t rx_gsActionIdx;
 
-extern bool loraStartJustSent;
-
 extern bool loraSyncPaused;
 extern bool loraKillsResetReceived;
 extern bool loraTimerFrozen;

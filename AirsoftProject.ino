@@ -115,7 +115,6 @@ uint32_t tagWaitStart = 0;
 uint32_t lastTimerTick = 0;
 
 int32_t appliedPenalties[4] = {0, 0, 0, 0};
-uint32_t loraStartPendingTime = 0;
 
 bool isGamePaused = false;
 uint32_t pauseStartTime = 0;

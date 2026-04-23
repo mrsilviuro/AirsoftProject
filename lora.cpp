@@ -88,7 +88,6 @@ uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
 uint8_t rx_rsLimitIdx[4] = {0};
 uint8_t rx_gsActionIdx = 2;
 
-bool loraStartJustSent = false;
 bool loraSyncPaused = false;
 bool loraKillsResetReceived = false;
 int32_t loraRxPenalties[4] = {0};
@@ -457,14 +456,10 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         loraSyncTimerReset = true;
     } else if (txPktType == PKT_START) {
         Serial.println("[LORA] START trimis.");
-        loraTimerFrozen      = false;
-        isGameTimerRunning   = true;
-        gameTimeLeftSeconds  = s_gameTimeLeft;
-        lastTimerTickOut     = now;  // ← vezi Pasul 4
-        digitalWrite(PIN_RELAY, LOW);
-        isRelayActiveOut     = true;
-        relayTurnOffTimeOut  = now + 5000;
-        Serial.println("[START] Timer pornit dupa AUX LOW!");
+        loraTimerFrozen   = false;
+        loraStartTimeLeft = s_gameTimeLeft;
+        loraStartApplyNow = true;
+        Serial.println("[START] Apply flag setat dupa AUX LOW!");
     } else if (txPktType == PKT_URGENT) {
         Serial.print("[LORA] Urgent trimis: ");
         Serial.println(s_urgentEvent);
@@ -685,9 +680,9 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
                 if (globalUnitStatus[sender-1] == TEAM_PLANTED)
                     globalEventTime[sender-1] = now;
             } else if (piggy == EVT_GAME_PAUSED) {
-                loraPauseJustSent = true;
+                loraPauseApplyNow = true;
             } else if (piggy == EVT_GAME_RESUMED) {
-                loraResumeJustSent = true;
+                loraResumeApplyNow = true;
             } else if (piggy == EVT_KILLS_RESET) {
                 loraKillsResetReceived = true;
             }
@@ -836,6 +831,11 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             if (rxCount == 4) {
                 uint8_t pktType = rxBuf[3];
                 rxLen = 7; // default urgent
+                // Extindem rxLen pentru PKT_URGENT cu timp (PAUSE = 11 bytes)
+                if (rxCount == 6 && rxBuf[3] == PKT_URGENT) {
+                    uint8_t teamIdByte = rxBuf[5] & 0x0F;
+                    if (teamIdByte == 0x0F) rxLen = 11;
+                }
                 if      (pktType == PKT_SYNC)       rxLen = 62;
                 else if (pktType == PKT_HEARTBEAT)  rxLen = 48;
                 else if (pktType == PKT_START)      rxLen = 10;
@@ -1122,8 +1122,10 @@ bool loraSendUrgent(uint8_t eventType, uint8_t teamId) {
         return false;
     }
 
-    if (eventType == EVT_GAME_PAUSED)
+    if (eventType == EVT_GAME_PAUSED) {
+        s_gameTimeLeftForPause = loraGameTimeForPause;
         buildUrgentPause(s_gameTimeLeftForPause);
+    }
     else
         buildUrgent(eventType, teamId);
     startTransmit();
