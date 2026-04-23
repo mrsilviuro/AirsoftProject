@@ -973,7 +973,7 @@ void drawAdminPages(const AdminContext& ac) {
     if (ac.selectedPage == 0) {
         // --- GAME SETTINGS ---
         const char* const wcT[] = {"By Points", "By Conquest", "By Any"};
-        const char* const tlT[] = {"No limit", "10 sec", "1 Hour", "2 Hours", "3 Hours", "4 Hours", "5 Hours", "6 Hours", "7 Hours", "8 Hours", "9 Hours", "10 Hours", "11 Hours", "12 Hours", "24 Hours"};
+        const char* const tlT[] = {"No limit", "15 min", "30 min", "1 Hour", "2 Hours", "3 Hours", "4 Hours", "5 Hours", "6 Hours", "7 Hours", "8 Hours", "9 Hours", "10 Hours", "11 Hours", "12 Hours", "24 Hours"};
         const char* const bT[] = {"No bonus", "15 min", "30 min", "1 Hour", "2 Hours", "3 Hours", "4 Hours"};
         char buf[30];
         uint8_t x;

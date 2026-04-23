@@ -350,7 +350,7 @@ void applyTimeReset() {
     conquestWinner = TEAM_NEUTRAL;
 
     // Reincarcam timpul original din gsTimeLimit
-    const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400,
+    const uint32_t tl[] = {0, 900, 1800, 3600, 7200, 10800, 14400,
         18000, 21600, 25200, 28800, 32400,
         36000, 39600, 43200, 86400};
         gameTimeLeftSeconds = tl[gsTimeLimit];
@@ -381,10 +381,9 @@ void applyTimeReset() {
             relayTurnOffTime = 0;
         }
 
-        // Oprim buzzer daca suna (timeout/bomba)
+        refreshLEDs();
         noTone(PIN_BUZZER);
 
-        currentPage = 5;  // ramane pe pagina 6
         needsDisplayUpdate = true;
         Serial.println("[TIME RESET] Timp resetat!");
 }
@@ -545,9 +544,9 @@ void syncAdminIndices() {
     gsIndex = bsIndex = rsIndex = twIndex = 0;
 
     // Game Settings — recalculam gsTimeLimit din gameTimeLeftSeconds
-    const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400, 18000,
+    const uint32_t tl[] = {0, 900, 1800, 3600, 7200, 10800, 14400, 18000,
         21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
-        for (uint8_t i = 0; i < 15; i++)
+        for (uint8_t i = 0; i < 16; i++)
             if (tl[i] == gameTimeLeftSeconds) { gsTimeLimit = i; break; }
 
             const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
@@ -689,6 +688,7 @@ void loop() {
     if (loraTimeResetReceived) {
         loraTimeResetReceived = false;
         applyTimeReset();
+        tone(PIN_BUZZER, 1500, 300);  // beep discret pe receptor
     }
 
     if (loraSettingsReceived) {
@@ -1194,6 +1194,7 @@ void loop() {
                     tone(PIN_BUZZER, 1500, 300);
                     loraSendUrgent(EVT_TIME_RESET, 0);
                     applyTimeReset();
+                    currentPage = 5;  // master ramane pe pagina 6
                     timeResetDoneStart = millis();
                     currentState = STATE_KILL_RESET_DONE;
                     killResetHasPoints = false;
@@ -1237,6 +1238,7 @@ void loop() {
                             // Reset direct
                             loraSendUrgent(EVT_KILLS_RESET, 0);
                             applyKillsReset();
+                            currentPage = 2;
                             killResetHasPoints = false;
                             killResetDoneStart = millis();
                             currentState = STATE_KILL_RESET_DONE;
@@ -1272,7 +1274,7 @@ void loop() {
             if (millis() - killResetDoneStart >= 2000) {
                 refreshLEDs();
                 currentState = STATE_PAGES;
-                currentPage = 2;
+                // currentPage setat deja de applyKillsReset (pag 3) sau applyTimeReset (pag 6)
                 needsDisplayUpdate = true;
             }
             break;
@@ -1488,19 +1490,17 @@ void onShortPress(uint8_t btnIndex) {
             } else if (currentPage == 4) {
                 ctx.page5ScrollIndex++;
                 needsDisplayUpdate = true;
+            } else if (currentPage == 5) {
+                // Verde pe pagina 6 — Time Reset
+                if (gsTimeLimit == 0 || !isGameTimerRunning && !isTimeOut) {
+                    tone(PIN_BUZZER, 200, 300);
+                } else {
+                    timeResetAdminStart = millis();
+                    currentState = STATE_TIME_RESET_ADMIN;
+                    needsDisplayUpdate = true;
+                    tone(PIN_BUZZER, 1000, 100);
+                }
             }
-        } else if (btnIndex == 2 && currentPage == 5) {
-            // VERDE pe pagina 6 — Time Reset
-            if (gsTimeLimit == 0 || gameTimeLeftSeconds == 0 && !isGameTimerRunning && !isTimeOut) {
-                // Fara timp setat sau timp nesetat — beep eroare
-                tone(PIN_BUZZER, 200, 300);
-            } else {
-                timeResetAdminStart = millis();
-                currentState = STATE_TIME_RESET_ADMIN;
-                needsDisplayUpdate = true;
-                tone(PIN_BUZZER, 1000, 100);
-            }
-            return;
         } else if (btnIndex == 3 && currentPage == 5) {
             // YELLOW pe pagina 6 — cerem card admin pentru start
             if (gameTimeLeftSeconds > 0 && !isGameTimerRunning) {
@@ -1611,14 +1611,14 @@ void onShortPress(uint8_t btnIndex) {
                 if (gsIndex == 0)
                     gsWinCond = (gsWinCond + 1) % 3;
                 else if (gsIndex == 1)
-                    gsTimeLimit = (gsTimeLimit + 1) % 15;
+                    gsTimeLimit = (gsTimeLimit + 1) % 16;
                 else if (gsIndex == 2)
                     gsBonus = (gsBonus + 1) % 7;
                 else if (gsIndex == 3)
                     gsActionIdx = (gsActionIdx + 1) % 4;
                 else if (gsIndex == 4) {
                     // CONFIRM
-                    const uint32_t tl[] = {0, 10, 3600, 7200, 10800, 14400, 18000, 21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
+                    const uint32_t tl[] = {0, 900, 1800, 3600, 7200, 10800, 14400, 18000, 21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
                     const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
                     gameTimeLeftSeconds = tl[gsTimeLimit];
                     bonusIntervalMinutes = bn[gsBonus];
@@ -1707,6 +1707,7 @@ void onShortPress(uint8_t btnIndex) {
             // RED — No, reset direct fara puncte
             loraSendUrgent(EVT_KILLS_RESET, 0);
             applyKillsReset();
+            currentPage = 2;  // master ramane pe pagina 3
             killResetHasPoints = false;
             killResetDoneStart = millis();
             currentState = STATE_KILL_RESET_DONE;
@@ -1732,6 +1733,7 @@ void onShortPress(uint8_t btnIndex) {
             // Reset kill-uri + queue + transmisie
             loraSendUrgent(EVT_KILLS_RESET, 0);
             applyKillsReset();
+            currentPage = 2;  // master ramane pe pagina 3
             killResetDoneStart = millis();
             currentState = STATE_KILL_RESET_DONE;
             needsDisplayUpdate = true;
