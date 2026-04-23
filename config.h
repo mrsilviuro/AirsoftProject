@@ -6,7 +6,7 @@
 // ============================================================
 // IDENTITATE UNITATE
 // ============================================================
-#define UNIT_ID 2
+#define UNIT_ID 1
 #define NETWORK_ID "N01"
 #define MAX_UNITS 12
 
@@ -114,7 +114,7 @@ enum GameState : uint8_t {
   STATE_WAIT_ADMIN_TAG,
   STATE_LOADING,
   STATE_READY,
-  STATE_SYNCED_RECEIVED
+  STATE_SYNCED_RECEIVED,
   STATE_KILL_RESET_ADMIN,
   STATE_KILL_RESET_CONFIRM,
   STATE_KILL_RESET_WINNER,

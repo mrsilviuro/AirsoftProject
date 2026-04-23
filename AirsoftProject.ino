@@ -11,6 +11,7 @@
 // ============================================================
 GameState currentState = STATE_BOOT;
 bool needsDisplayUpdate = true;
+bool killsJustReset = false;
 
 // --- Display brightness ---
 uint32_t lastActivityTime = 0;
@@ -328,6 +329,8 @@ void applyKillsReset() {
     queueHead = 0;
     queueTail = 0;
     memset(respawnQueue, 0, sizeof(respawnQueue));
+    killsJustReset = true;
+    for (uint8_t i = 0; i < 4; i++) loraRxKills[i] = 0;
     needsDisplayUpdate = true;
     Serial.println("[KILLS] Reset kill-uri si coada respawn!");
 }
@@ -739,7 +742,7 @@ void loop() {
     }
 
     // Scadere timer joc
-    if (isGameTimerRunning && !isGamePaused && gameTimeLeftSeconds > 0) {
+    if (isGameTimerRunning && !isGamePaused && !loraTimerFrozen && gameTimeLeftSeconds > 0) {
         if (now - lastTimerTick >= 1000) {
             lastTimerTick += 1000;
             gameTimeLeftSeconds--;
@@ -1423,6 +1426,7 @@ void onShortPress(uint8_t btnIndex) {
 
     } else if (currentState == STATE_RESPAWN_SETUP) {
         respawnTeam = (Team)(btnIndex + 1);
+        loraSendUrgent(EVT_MODE_RESPAWN, (uint8_t)respawnTeam);
         currentState = STATE_LOADING;
         loadingStartTime = millis();
         queueCount = queueHead = queueTail = 0;
@@ -1618,6 +1622,7 @@ void onShortPress(uint8_t btnIndex) {
             killResetHasPoints = false;
             killResetDoneStart = millis();
             currentState = STATE_KILL_RESET_DONE;
+            tone(PIN_BUZZER, 1500, 300);
             needsDisplayUpdate = true;
         } else if (btnIndex == 1) {
             // BLUE — Yes, selectam winnerul

@@ -1368,7 +1368,7 @@ void drawKillResetDoneScreen(uint16_t points, uint8_t teamIndex, bool hasPoints)
     display.setTextSize(2);
     const char* msg = "DONE";
     uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 12)) / 2;
-    display.setCursor(x, 16);
+    display.setCursor(x, 24);
     display.print(msg);
     if (hasPoints && points > 0) {
         display.setTextSize(1);

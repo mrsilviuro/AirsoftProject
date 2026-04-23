@@ -11,6 +11,7 @@ HardwareSerial LoRaSerial(1);
 char currentSyncID[4] = "---";
 bool isNetworkSynced = false;
 bool isMasterNode = false;
+bool loraTimerFrozen = false;
 
 bool    loraSyncJustReceived = false;
 uint8_t loraSyncFromUnit     = 1; // ← 1 in loc de 0, evitam index -1
@@ -349,6 +350,7 @@ static void buildEpochSync(uint32_t timeLeft) {
     txBuf[8] =  timeLeft        & 0xFF;
     txBuf[9] = calcCRC(txBuf, 9, true);
     txLen     = 10;
+    s_gameTimeLeft = timeLeft;  // salvam valoarea transmisa
     txPktType = PKT_EPOCH_SYNC;
 }
 
@@ -400,6 +402,7 @@ static void startTransmit() {
     if (txState != TX_IDLE) return;
     txState = TX_WAIT_AIR_FREE;
     txStateStart = millis();
+    if (txPktType == PKT_EPOCH_SYNC) loraTimerFrozen = true;
 }
 
 // ============================================================
@@ -442,6 +445,7 @@ static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& 
         else if (s_urgentEvent == EVT_GAME_RESUMED) loraResumeJustSent = true;
     } else if (txPktType == PKT_EPOCH_SYNC) {
         Serial.println("[LORA] EpochSync trimis.");
+        loraTimerFrozen = false;
         uint8_t mySecond = (UNIT_ID - 1) * 5;
         syncEpochSeconds = mySecond;
         lastEpochTick = now;
@@ -717,8 +721,10 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
         ((uint32_t)buf[6] << 16) |
         ((uint32_t)buf[7] << 8)  |
         buf[8];
-        if (isGameTimerRunning && rxTime > 0)
+        if (isGameTimerRunning && rxTime > 0) {
             gameTimeLeftSeconds = rxTime;
+            loraSyncTimerReset = true;  // resetam lastTimerTick la momentul receptiei
+        }
 
         Serial.print("[LORA] EpochSync -> secunda "); Serial.println(masterSecond);
     } else if (pktType == PKT_RESTART) {
@@ -941,7 +947,7 @@ void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPen
             hasTransmittedThisMinute = true;
 
             if (isMasterNode && epochSyncTimer > 0 &&
-                now - epochSyncTimer >= 360000 &&
+                now - epochSyncTimer >= 3600000 &&
                 pendingEventType == EVT_NONE) {
                 buildEpochSync(gameTimeLeftSeconds);
                 } else {

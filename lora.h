@@ -79,6 +79,7 @@ extern bool loraPauseJustSent;
 extern bool loraResumeJustSent;
 extern bool loraSyncPaused;
 extern bool loraKillsResetReceived;
+extern bool loraTimerFrozen;
 
 // ============================================================
 // Initializare
