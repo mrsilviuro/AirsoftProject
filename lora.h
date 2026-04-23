@@ -75,11 +75,14 @@ extern uint8_t rx_gsActionIdx;
 
 extern bool loraStartJustSent;
 
-extern bool loraPauseJustSent;
-extern bool loraResumeJustSent;
 extern bool loraSyncPaused;
 extern bool loraKillsResetReceived;
 extern bool loraTimerFrozen;
+extern bool   loraStartApplyNow;
+extern bool   loraPauseApplyNow;
+extern bool   loraResumeApplyNow;
+extern uint32_t loraStartTimeLeft;
+
 
 // ============================================================
 // Initializare
@@ -151,3 +154,6 @@ extern bool loraSyncTimerReset;
 extern uint32_t loraStartGameTimeLeft;
 extern uint32_t loraRxTimerTick;
 extern uint32_t loraMasterTimerTick;
+extern uint32_t loraGameTimeForPause;
+
+void loraSendUrgentPause(uint32_t gameTimeLeft);

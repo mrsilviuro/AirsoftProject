@@ -119,8 +119,6 @@ uint32_t loraStartPendingTime = 0;
 
 bool isGamePaused = false;
 uint32_t pauseStartTime = 0;
-uint32_t loraPausePendingTime = 0;
-uint32_t loraResumePendingTime = 0;
 uint8_t pendingAdminAction = 0;  // 0=start, 1=pause, 2=resume
 uint32_t killResetAdminStart = 0;
 uint8_t killResetWinnerTeam = 255;
@@ -603,46 +601,27 @@ void loop() {
         loraRxTimerTick = 0;
     }
 
-    if (loraStartJustSent) {
-        loraStartJustSent   = false;
-        // Asteptam cat dureaza receptia pe celelalte unitati
-        // La SF9, 48 bytes ≈ 340ms — nu folosim delay() deci folosim un flag cu timestamp
-        loraStartPendingTime = millis() + 400;  // ← 400ms delay
+    // START — aplicat dupa AUX LOW (atat pe master cat si pe receptor)
+    if (loraStartApplyNow) {
+        loraStartApplyNow   = false;
+        isGameTimerRunning  = true;
+        gameTimeLeftSeconds = loraStartTimeLeft;
+        lastTimerTick       = millis();
+        digitalWrite(PIN_RELAY, LOW);
+        isRelayActive       = true;
+        relayTurnOffTime    = millis() + 5000;
+        Serial.println("[START] Timer pornit!");
     }
 
-    if (loraStartPendingTime > 0 && millis() >= loraStartPendingTime) {
-        loraStartPendingTime = 0;
-        Serial.print("[START] loraStartGameTimeLeft=");
-        Serial.println(loraStartGameTimeLeft);
-        Serial.print("[START] gameTimeLeftSeconds=");
-        Serial.println(gameTimeLeftSeconds);
-        if (loraStartGameTimeLeft > 0) {
-            isGameTimerRunning  = true;
-            gameTimeLeftSeconds = loraStartGameTimeLeft;
-            lastTimerTick       = millis();
-            digitalWrite(PIN_RELAY, LOW);
-            isRelayActive       = true;
-            relayTurnOffTime    = millis() + 5000;
-        }
-    }
-
-    if (loraPauseJustSent) {
-        loraPauseJustSent = false;
-        loraPausePendingTime = millis() + 400;
-    }
-
-    if (loraPausePendingTime > 0 && millis() >= loraPausePendingTime) {
-        loraPausePendingTime = 0;
+    // PAUSE — aplicat dupa AUX LOW
+    if (loraPauseApplyNow) {
+        loraPauseApplyNow = false;
         if (!isGamePaused) applyGamePause();
     }
 
-    if (loraResumeJustSent) {
-        loraResumeJustSent = false;
-        loraResumePendingTime = millis() + 400;
-    }
-
-    if (loraResumePendingTime > 0 && millis() >= loraResumePendingTime) {
-        loraResumePendingTime = 0;
+    // RESUME — aplicat dupa AUX LOW
+    if (loraResumeApplyNow) {
+        loraResumeApplyNow = false;
         if (isGamePaused) applyGameResume();
     }
 
@@ -1082,6 +1061,7 @@ void loop() {
                         loraSendStart(gameTimeLeftSeconds);
                         Serial.println("[GAME] Start transmis!");
                     } else if (pendingAdminAction == 1) {
+                        loraGameTimeForPause = gameTimeLeftSeconds;
                         loraSendUrgent(EVT_GAME_PAUSED, 0);
                         Serial.println("[GAME] Pause transmis!");
                     } else if (pendingAdminAction == 2) {
