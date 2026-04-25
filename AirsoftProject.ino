@@ -683,6 +683,7 @@ void loop() {
     if (loraKillsResetReceived) {
         loraKillsResetReceived = false;
         applyKillsReset();
+        tone(PIN_BUZZER, 1500, 300);
     }
 
     if (loraTimeResetReceived) {

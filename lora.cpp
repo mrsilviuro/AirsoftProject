@@ -680,8 +680,9 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
             else if (piggy == EVT_BOMB_DEFUSED || piggy == EVT_BOMB_EXPLODED) {
                 if (globalUnitStatus[sender-1] == TEAM_PLANTED)
                     globalEventTime[sender-1] = now;
-                // Alertele critice NU se proceseaza din piggyback
-                // — au propriul PKT_URGENT si trebuie sa ajunga o singura data, curat
+            }
+            // EVT_GAME_PAUSED, EVT_GAME_RESUMED, EVT_KILLS_RESET, EVT_TIME_RESET
+            // NU se proceseaza din piggyback — au propriul PKT_URGENT
         }
     } else if (pktType == PKT_URGENT) {
         uint8_t eType = (buf[5] >> 4) & 0x0F;
