@@ -9,6 +9,9 @@
 // ============================================================
 // Starea masinii de stari
 // ============================================================
+uint32_t latchLowStart = 0;
+bool latchPulsing = false;
+
 GameState currentState = STATE_BOOT;
 bool needsDisplayUpdate = true;
 bool killsJustReset = false;
@@ -596,6 +599,8 @@ void setup() {
     esp_bt_controller_disable();
     Serial.begin(115200);
 
+    pinMode(PIN_LATCH, OUTPUT);
+    digitalWrite(PIN_LATCH, HIGH);
 
     for (uint8_t i = 0; i < 4; i++) {
         pinMode(PIN_LEDS[i], OUTPUT);
@@ -684,6 +689,12 @@ void loop() {
         loraKillsResetReceived = false;
         applyKillsReset();
         tone(PIN_BUZZER, 1500, 300);
+    }
+
+    // Power latch pulse non-blocking
+    if (latchPulsing && millis() - latchLowStart >= 50) {
+        latchPulsing = false;
+        digitalWrite(PIN_LATCH, HIGH);
     }
 
     if (loraTimeResetReceived) {
@@ -919,6 +930,9 @@ void loop() {
             Serial.println("[RFID] Admin tag detectat!");
             lastRfidRead = millis();
             resetActivity();
+            digitalWrite(PIN_LATCH, LOW);
+            latchLowStart = millis();
+            latchPulsing = true;
 
         } else if (rfid.result == RFID_READ_POINTS && selectedMode != -1 && !isTimeOut && !isGamePaused) {
             // Determinam echipa proprietara
@@ -1842,5 +1856,8 @@ void onAdminCombo() {
     adminScrollIndex = 0;
     currentState = STATE_ADMIN_MENU;
     needsDisplayUpdate = true;
+    digitalWrite(PIN_LATCH, LOW);
+    latchLowStart = millis();
+    latchPulsing = true;
     Serial.println("[ADMIN] Intram in Admin Mode.");
 }

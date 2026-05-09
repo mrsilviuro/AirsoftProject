@@ -6,7 +6,7 @@
 // ============================================================
 // IDENTITATE UNITATE
 // ============================================================
-#define UNIT_ID 1
+#define UNIT_ID 2
 #define NETWORK_ID "N01"
 #define MAX_UNITS 12
 
@@ -19,7 +19,7 @@
 #define PIN_BUZZER 2
 
 // --- RFID (MFRC522 via SPI) ---
-#define PIN_RFID_RST 17
+#define PIN_LATCH 17
 #define PIN_RFID_MISO 19
 #define PIN_RFID_MOSI 23
 #define PIN_RFID_SCK 18
