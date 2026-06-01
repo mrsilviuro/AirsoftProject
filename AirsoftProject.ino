@@ -129,6 +129,8 @@ bool killResetHasPoints = false;
 uint32_t killResetDoneStart = 0;
 uint32_t timeResetAdminStart = 0;
 uint32_t timeResetDoneStart = 0;
+uint32_t powerOffStart = 0;
+bool powerOffPulsed = false;
 
 AdminContext buildAdminContext() {
     AdminContext ac;
@@ -692,7 +694,7 @@ void loop() {
     }
 
     // Power latch pulse non-blocking
-    if (latchPulsing && millis() - latchLowStart >= 50) {
+    if (latchPulsing && millis() - latchLowStart >= 100) {
         latchPulsing = false;
         digitalWrite(PIN_LATCH, HIGH);
     }
@@ -845,6 +847,7 @@ void loop() {
         if (now - lastPointTick >= 10000) {
             uint32_t minutesHeld = (now - captureStartTime) / 60000;
             uint32_t bonus = (bonusIntervalMinutes > 0) ? (minutesHeld / bonusIntervalMinutes) : 0;
+            if (bonus > 3) bonus = 3;  // limita maxima
             uint32_t points = 3 + bonus;
 
             liveScore[sectorOwner - 1] += points;
@@ -930,9 +933,6 @@ void loop() {
             Serial.println("[RFID] Admin tag detectat!");
             lastRfidRead = millis();
             resetActivity();
-            digitalWrite(PIN_LATCH, LOW);
-            latchLowStart = millis();
-            latchPulsing = true;
 
         } else if (rfid.result == RFID_READ_POINTS && selectedMode != -1 && !isTimeOut && !isGamePaused) {
             // Determinam echipa proprietara
@@ -1022,6 +1022,26 @@ void loop() {
                 needsDisplayUpdate = false;
             }
             handleButtons();
+            break;
+
+        case STATE_POWER_OFF:
+            if (needsDisplayUpdate) {
+                drawPowerOffScreen();
+                needsDisplayUpdate = false;
+            }
+            // Dupa 2 secunde, pulsam latch-ul
+            if (!powerOffPulsed && millis() - powerOffStart >= 2000) {
+                powerOffPulsed = true;
+                digitalWrite(PIN_LATCH, LOW);
+                latchLowStart = millis();
+                latchPulsing = true;
+            }
+            // Daca pulsul s-a terminat si suntem inca aici (intrerupator ON), revenim
+            if (powerOffPulsed && !latchPulsing) {
+                powerOffPulsed = false;
+                currentState = STATE_ADMIN_MENU;
+                needsDisplayUpdate = true;
+            }
             break;
 
         case STATE_ADMIN_SYNC_WARN:
@@ -1543,7 +1563,7 @@ void onShortPress(uint8_t btnIndex) {
             // VERDE — scroll jos
             adminMenuIndex++;
             if (adminMenuIndex == 5 && selectedMode == -1) adminMenuIndex++;
-            if (adminMenuIndex >= 7) {
+            if (adminMenuIndex >= 8) {
                 adminMenuIndex = 0;
                 adminScrollIndex = 0;
             } else {
@@ -1593,6 +1613,14 @@ void onShortPress(uint8_t btnIndex) {
                 tone(PIN_BUZZER, 2000, 800);
                 loraSendRestartBlocking();
                 ESP.restart();
+
+            } else if (adminMenuIndex == 7) {
+                // POWER OFF
+                currentState = STATE_POWER_OFF;
+                powerOffStart = millis();
+                powerOffPulsed = false;
+                needsDisplayUpdate = true;
+                tone(PIN_BUZZER, 1500, 300);
 
             } else {
                 if      (adminMenuIndex == 0) adminSelectedPage = 0;
@@ -1856,8 +1884,5 @@ void onAdminCombo() {
     adminScrollIndex = 0;
     currentState = STATE_ADMIN_MENU;
     needsDisplayUpdate = true;
-    digitalWrite(PIN_LATCH, LOW);
-    latchLowStart = millis();
-    latchPulsing = true;
     Serial.println("[ADMIN] Intram in Admin Mode.");
 }

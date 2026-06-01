@@ -178,5 +178,6 @@ void drawKillResetConfirmScreen();
 void drawKillResetWinnerScreen();
 void drawKillResetDoneScreen(uint16_t points, uint8_t teamIndex, bool hasPoints);
 void drawSyncingScreen();
+void drawPowerOffScreen();
 
 void displayRefreshRegisters();

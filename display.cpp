@@ -419,6 +419,7 @@ void drawPages(const PageContext& ctx) {
                     } else {
                         uint32_t totalMin = el / 60000;
                         uint32_t bonus = (ctx.bonusIntervalMinutes > 0) ? (totalMin / ctx.bonusIntervalMinutes) : 0;
+                        if (bonus > 3) bonus = 3;  // limita maxima
                         char ptsStr[10];
                         snprintf(ptsStr, sizeof(ptsStr), "%u", ctx.currentCapturePoints);
                         uint8_t pw = strlen(ptsStr) * 6;
@@ -940,10 +941,10 @@ void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) 
     display.print("Admin Mode");
     display.drawLine(0, 10, SCREEN_WIDTH, 10, SSD1306_WHITE);
 
-    const char* const items[7] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart"};
+    const char* const items[8] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart", "Power Off"};
 
     uint8_t shown = 0;
-    for (uint8_t i = scrollIndex; i < 7; i++) {
+    for (uint8_t i = scrollIndex; i < 8; i++) {
         if (shown >= 5) break;
 
         // Ascundem Change Mode (index 5) daca nu avem mod selectat
@@ -962,14 +963,14 @@ void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) 
         shown++;
     }
 
-    uint8_t total = (selectedMode == -1) ? 6 : 7;
+    uint8_t total = (selectedMode == -1) ? 7 : 8;
     drawScrollbar(total, 5, scrollIndex, 13, 51);
     display.display();
 }
 void drawAdminPages(const AdminContext& ac) {
     display.clearDisplay();
     display.setTextSize(1);
-    const char* const items[7] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart"};
+    const char* const items[8] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart", "Power Off"};
     if (ac.selectedPage == 0) {
         // --- GAME SETTINGS ---
         const char* const wcT[] = {"By Points", "By Conquest", "By Any"};
@@ -1386,5 +1387,15 @@ void drawKillResetDoneScreen(uint16_t points, uint8_t teamIndex, bool hasPoints)
         display.setCursor(x, 52);
         display.print(team);
     }
+    display.display();
+}
+
+void drawPowerOffScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* msg = "Turning Off ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
+    display.setCursor(x, 28);
+    display.print(msg);
     display.display();
 }

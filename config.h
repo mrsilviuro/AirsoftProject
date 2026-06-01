@@ -6,7 +6,7 @@
 // ============================================================
 // IDENTITATE UNITATE
 // ============================================================
-#define UNIT_ID 2
+#define UNIT_ID 3
 #define NETWORK_ID "N01"
 #define MAX_UNITS 12
 
@@ -119,7 +119,8 @@ enum GameState : uint8_t {
   STATE_KILL_RESET_CONFIRM,
   STATE_KILL_RESET_WINNER,
   STATE_KILL_RESET_DONE,
-  STATE_TIME_RESET_ADMIN
+  STATE_TIME_RESET_ADMIN,
+  STATE_POWER_OFF
 };
 
 // ============================================================
