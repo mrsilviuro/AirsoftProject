@@ -1,21 +1,25 @@
 #include <Arduino.h>
 
 #include "display.h"
+
 // ============================================================
 // Obiectul display (definit aici, exportat prin display.h)
 // ============================================================
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
 // ============================================================
 // BOOT — Date interne (static = invizibile in afara acestui fisier)
 // ============================================================
-static const uint16_t BOOT_NOTES[] = {523, 659, 784, 1046, 0};
-static const uint16_t NOTE_DURATIONS[] = {150, 150, 150, 300, 100};
-static const uint8_t TOTAL_NOTES = 5;
+static const uint16_t BOOT_NOTES[]     = {523, 659, 784, 1046, 0};
+static const uint16_t NOTE_DURATIONS[]  = {150, 150, 150, 300, 100};
+static const uint8_t  TOTAL_NOTES       = 5;
+
 static uint32_t bootStartTime = 0;
-static uint8_t lastCountdown = 255;  // 255 = valoare imposibila, forteaza primul draw
-static bool melodyPlaying = true;
-static uint8_t currentNote = 0;
+static uint8_t  lastCountdown = 255;  // 255 = valoare imposibila -> forteaza primul draw
+static bool     melodyPlaying = true;
+static uint8_t  currentNote   = 0;
 static uint32_t noteStartTime = 0;
+
 // ============================================================
 // displayInit()
 // ============================================================
@@ -26,10 +30,12 @@ void displayInit() {
     display.setTextColor(SSD1306_WHITE);
     display.display();
     display.ssd1306_command(SSD1306_SETCONTRAST);
-    display.ssd1306_command(175);  // 80%
+    display.ssd1306_command(175);  // ~80%
+
     // Pornim ceasul de boot si melodia
     bootStartTime = millis();
     noteStartTime = millis();
+
     // Prima nota si primul LED pornite direct, fara sa asteptam loop()
     tone(PIN_BUZZER, BOOT_NOTES[0]);
     for (uint8_t i = 0; i < 4; i++) {
@@ -37,18 +43,23 @@ void displayInit() {
     }
 }
 
+// ============================================================
+// displayRefreshRegisters() — anti-drift imagine SSD1309
+// ============================================================
 void displayRefreshRegisters() {
     display.ssd1306_command(0x2E);  // Deactivate scroll
     display.ssd1306_command(0x40);  // Display start line = 0
     display.ssd1306_command(0xD3);  // Set display offset
     display.ssd1306_command(0x00);  // Offset = 0
 }
+
 // ============================================================
 // handleBoot()
 // ============================================================
 bool handleBoot() {
     uint32_t now = millis();
     uint32_t elapsed = now - bootStartTime;
+
     // --- Verificam daca au trecut 3 secunde ---
     if (elapsed >= 3000) {
         // Curatenie: oprim sunetul si stingem LED-urile
@@ -56,16 +67,19 @@ bool handleBoot() {
         for (uint8_t i = 0; i < 4; i++) digitalWrite(PIN_LEDS[i], LOW);
         return true;  // Semnal catre .ino: treci la STATE_MENU
     }
+
     // --- Ecran: redesenam DOAR la schimbarea secundei (nu in fiecare loop) ---
     uint8_t countdown = 3 - (elapsed / 1000);  // 3 -> 2 -> 1
     if (countdown != lastCountdown) {
         display.clearDisplay();
+
         // Titlu MARE (Size 2)
         display.setTextSize(2);
         const char* title = "NOVA UNITS";
         uint8_t x = (SCREEN_WIDTH - (strlen(title) * 12)) / 2;
         display.setCursor(x, 10);
         display.print(title);
+
         // Countdown (Size 1)
         display.setTextSize(1);
         char buf[25];
@@ -73,14 +87,17 @@ bool handleBoot() {
         x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
         display.setCursor(x, 35);
         display.print(buf);
+
         // Numele clubului
         const char* club = "Airsoft Club Roman";
         x = (SCREEN_WIDTH - (strlen(club) * 6)) / 2;
         display.setCursor(x, 48);
         display.print(club);
+
         display.display();
         lastCountdown = countdown;
     }
+
     // --- Melodie non-blocking ---
     if (melodyPlaying) {
         if (now - noteStartTime >= NOTE_DURATIONS[currentNote]) {
@@ -104,13 +121,13 @@ bool handleBoot() {
             }
         }
     }
+
     return false;  // Boot inca in desfasurare
 }
+
 // ============================================================
-// Iconite stocate in Flash (PROGMEM)
+// Iconite navigare stocate in Flash (PROGMEM)
 // ============================================================
-static const unsigned char POINT_BMP[] PROGMEM = {0x38, 0x7C, 0xFE, 0xFE, 0xFE, 0x7C, 0x38};
-static const unsigned char SKULL_BMP[] PROGMEM = {0x10, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x10};
 static const unsigned char ARROW_LEFT[] PROGMEM = {
     0x08,  // 00001000
     0x18,  // 00011000
@@ -130,20 +147,28 @@ static const unsigned char ARROW_RIGHT[] PROGMEM = {
     0xC0,  // 11000000
     0x80   // 10000000
 };
+
+// Iconite pagini (puncte / kill-uri)
+static const unsigned char POINT_BMP[] PROGMEM = {0x38, 0x7C, 0xFE, 0xFE, 0xFE, 0x7C, 0x38};
+static const unsigned char SKULL_BMP[] PROGMEM = {0x10, 0x10, 0x7C, 0x10, 0x10, 0x10, 0x10};
+
 // ============================================================
 // drawMenu()
 // ============================================================
 void drawMenu(uint8_t menuIndex) {
     display.clearDisplay();
     display.setTextSize(1);
-    // Header: "Bravo Unit" — generat din UNIT_ID si UNIT_NAMES (config.h)
+
+    // Header: "Alpha Unit" — generat din UNIT_ID si UNIT_NAMES (config.h)
     char header[20];
     snprintf(header, sizeof(header), "%s Unit", UNIT_NAMES[UNIT_ID - 1]);
     uint8_t x = (SCREEN_WIDTH - (strlen(header) * 6)) / 2;
     display.setCursor(x, 0);
     display.print(header);
+
     // Linie separator
     display.drawLine(0, 10, SCREEN_WIDTH, 10, SSD1306_WHITE);
+
     // Cele 3 optiuni
     const char* const items[3] = {"Sector Unit", "Bomb Unit", "Respawn Unit"};
     for (uint8_t i = 0; i < 3; i++) {
@@ -156,6 +181,7 @@ void drawMenu(uint8_t menuIndex) {
         }
         display.print(items[i]);
     }
+
     // Footer cu instructiuni
     display.setCursor(0, 46);
     display.print("GREEN to scroll");
@@ -163,15 +189,10 @@ void drawMenu(uint8_t menuIndex) {
     display.print("YELLOW to confirm");
     display.display();
 }
-void drawBoomScreen() {
-    display.clearDisplay();
-    display.setTextSize(2);
-    const char* msg = "BOOOOOM!";
-    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 12)) / 2;
-    display.setCursor(x, 24);
-    display.print(msg);
-    display.display();
-}
+
+// ============================================================
+// drawRespawnSetup()
+// ============================================================
 void drawRespawnSetup() {
     display.clearDisplay();
     display.setTextSize(2);
@@ -186,58 +207,60 @@ void drawRespawnSetup() {
     display.setTextSize(1);
     display.display();
 }
+
 // ============================================================
-// drawActionScreen()
+// drawLoadingScreen()
 // ============================================================
-void drawActionScreen(ActionType actionType, uint8_t teamIndex, uint32_t elapsed, uint32_t totalMs) {
+void drawLoadingScreen(uint32_t elapsed, uint32_t totalMs) {
     display.clearDisplay();
+
+    // "LOADING ..." centrat vertical in jumatatea de sus
     display.setTextSize(1);
-    // Linia 1 — ce actiune se face
-    const char* actText = "";
-    if (actionType == ACT_CAPTURE)
-        actText = "CAPTURING SECTOR...";
-    else if (actionType == ACT_NEUTRALIZE)
-        actText = "NEUTRALIZING...";
-    else if (actionType == ACT_ARM)
-        actText = "ARMING BOMB...";
-    else if (actionType == ACT_DEFUSE)
-        actText = "DEFUSING BOMB...";
-    uint8_t x = (SCREEN_WIDTH - (strlen(actText) * 6)) / 2;
-    display.setCursor(x, 9);
-    display.print(actText);
-    // Linia 2 — numele echipei care actioneaza
-    const char* teamName = TEAM_NAMES[teamIndex];
-    x = (SCREEN_WIDTH - (strlen(teamName) * 6)) / 2;
-    display.setCursor(x, 21);
-    display.print(teamName);
-    // Bara de progres
-    // Contur: x=14, y=40, w=100, h=12
-    display.drawRect(14, 35, 100, 12, SSD1306_WHITE);
-    // Umplere: mapam elapsed -> 0..96 pixeli (interior = 96px latime)
+    const char* msg = "LOADING ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
+    display.setCursor(x, 22);
+    display.print(msg);
+
+    // Bara de progres — contur
+    display.drawRect(14, 35, 100, 10, SSD1306_WHITE);
+
+    // Umplere fluida
     uint8_t barW = (uint8_t)((uint32_t)96 * elapsed / totalMs);
     if (barW > 96) barW = 96;
-    if (barW > 0) display.fillRect(16, 37, barW, 8, SSD1306_WHITE);
-    // Timer numeric sub bara (cat timp a ramas)
-    uint32_t remaining = (elapsed < totalMs) ? (totalMs - elapsed) / 1000 + 1 : 0;
-    char timeBuf[8];
-    snprintf(timeBuf, sizeof(timeBuf), "%us", remaining);
-    x = (SCREEN_WIDTH - (strlen(timeBuf) * 6)) / 2;
-    display.setCursor(x, 51);
-    display.print(timeBuf);
+    if (barW > 0) display.fillRect(16, 37, barW, 6, SSD1306_WHITE);
+
     display.display();
 }
+
 // ============================================================
-// drawSuccessScreen()
+// drawReadyScreen()
 // ============================================================
-void drawSuccessScreen() {
+void drawReadyScreen(int8_t selectedMode) {
     display.clearDisplay();
+
+    const char* l1 = "System Ready ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setTextSize(1);
+    display.setCursor(x, 10);
+    display.print(l1);
+
+    const char* l2 = "GOOD LUCK!";
     display.setTextSize(2);
-    const char* msg = "SUCCESS!";
-    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 12)) / 2;
+    x = (SCREEN_WIDTH - (strlen(l2) * 12)) / 2;
     display.setCursor(x, 24);
-    display.print(msg);
+    display.print(l2);
+
+    const char* l3 = selectedMode == 0 ? "Sector Unit" :
+                     selectedMode == 1 ? "Bomb Unit"   :
+                                         "Respawn Unit";
+    display.setTextSize(1);
+    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
+    display.setCursor(x, 50);
+    display.print(l3);
+
     display.display();
 }
+
 // ============================================================
 // drawScrollbar()
 // ============================================================
@@ -307,9 +330,28 @@ void drawPageHeader(uint8_t currentPage, uint8_t batteryPercent) {
 
     display.drawLine(0, 10, SCREEN_WIDTH, 10, SSD1306_WHITE);
 }
-// ============================================================
-// drawPages()
-// ============================================================
+
+// Formateaza un numar de secunde ca "Xh XXmin XXsec", omitand orele/minutele cand sunt 0
+static void formatElapsed(uint32_t totalSec, char* buf, size_t bufLen) {
+    uint32_t h = totalSec / 3600;
+    uint32_t m = (totalSec % 3600) / 60;
+    uint32_t s = totalSec % 60;
+    if (h > 0)
+        snprintf(buf, bufLen, "%uh %02umin %02usec", (unsigned)h, (unsigned)m, (unsigned)s);
+    else if (m > 0)
+        snprintf(buf, bufLen, "%umin %02usec", (unsigned)m, (unsigned)s);
+    else
+        snprintf(buf, bufLen, "%usec", (unsigned)s);
+}
+
+// Mica baterie: corp 18x9 + terminal, cu 'bars' (0-4) bare pline
+static void drawBatteryIcon(uint8_t leftX, uint8_t y, uint8_t bars) {
+    display.drawRect(leftX, y, 18, 9, SSD1306_WHITE);
+    display.fillRect(leftX + 18, y + 2, 2, 5, SSD1306_WHITE);
+    for (uint8_t b = 0; b < bars && b < 4; b++)
+        display.fillRect(leftX + 2 + b * 4, y + 2, 3, 5, SSD1306_WHITE);
+}
+
 void drawPages(const PageContext& ctx) {
     display.clearDisplay();
     drawPageHeader(ctx.currentPage, ctx.batteryPercent);
@@ -321,20 +363,31 @@ void drawPages(const PageContext& ctx) {
             // --- GAME OVER ---
             if (ctx.isTimeOut) {
                 if (ctx.conquestWinner != TEAM_NEUTRAL) {
-                    display.setTextSize(2);
-                    const char* t1 = TEAM_NAMES[ctx.conquestWinner - 1];
-                    uint8_t x = (SCREEN_WIDTH - (strlen(t1) * 12)) / 2;
-                    display.setCursor(x, 15);
-                    display.print(t1);
-                    const char* t2 = "WINS!";
-                    x = (SCREEN_WIDTH - (strlen(t2) * 12)) / 2;
-                    display.setCursor(x, 33);
-                    display.print(t2);
+                    // 1. Afișăm "Wins By Conquest" sus (Text mic, Size 1)
                     display.setTextSize(1);
-                    const char* t3 = "by Conquest";
+                    const char* t1 = "And the WINNER is";
+                    uint8_t x = (SCREEN_WIDTH - (strlen(t1) * 6)) / 2;
+                    display.setCursor(x, 14); // Y = 10 (mai sus pe ecran)
+                    display.print(t1);
+
+                    // 2. Afișăm Numele Echipei sub primul text (Text mare, Size 2)
+                    display.setTextSize(2);
+                    const char* t2 = TEAM_NAMES[ctx.conquestWinner - 1];
+                    x = (SCREEN_WIDTH - (strlen(t2) * 12)) / 2;
+                    display.setCursor(x, 25); // Y = 24 (imediat sub "Wins By Conquest")
+                    display.print(t2);
+
+                    // 3. Afișăm restul textului (Text mic, Size 1)
+                    display.setTextSize(1);
+                    const char* t3 = "Press BLUE to";
                     x = (SCREEN_WIDTH - (strlen(t3) * 6)) / 2;
-                    display.setCursor(x, 52);
+                    display.setCursor(x, 44);
                     display.print(t3);
+
+                    const char* t4 = "check the score ...";
+                    x = (SCREEN_WIDTH - (strlen(t4) * 6)) / 2;
+                    display.setCursor(x, 54);
+                    display.print(t4);
                 } else {
                     display.setTextSize(2);
                     const char* t1 = "TIME OUT";
@@ -618,8 +671,7 @@ void drawPages(const PageContext& ctx) {
                     display.print("- ");
                 }
                 display.print(TEAM_NAMES[i]);
-                int32_t displayed = ctx.liveScore[i] - ctx.appliedPenalties[i];
-                if (displayed < 0) displayed = 0;
+                int32_t displayed = ctx.liveScore[i] - ctx.appliedPenalties[i];   // poate fi negativ -> afisam cu minus
                 char ptsBuf[15];
                 snprintf(ptsBuf, sizeof(ptsBuf), "%ld", displayed);
                 uint8_t tw = strlen(ptsBuf) * 6;
@@ -681,15 +733,17 @@ void drawPages(const PageContext& ctx) {
             for (uint8_t i = 0; i < MAX_UNITS; i++) {
                 uint8_t m = ctx.globalUnitMode[i];
                 Team t = ctx.globalUnitStatus[i];
-                bool online = (ctx.lastSeenTime[i] > 0 && (now - ctx.lastSeenTime[i] <= 600000)) || (i == UNIT_ID - 1);
-                if (!online) continue;
+                bool everSeen = (ctx.lastSeenTime[i] > 0) || (i == UNIT_ID - 1);
+                if (!everSeen) continue;
+                bool offline = (ctx.lastSeenTime[i] > 0) && (now - ctx.lastSeenTime[i] > 1800000);
                 rows[count].id = i;
                 rows[count].sortMode = (m == 0) ? 4 : m;
                 // Calcul timp pentru afisare
                 char timeStr[15] = "";
                 bool hasTime = false;
                 if (ctx.globalEventTime[i] > 0) {
-                    uint32_t el = (now - ctx.globalEventTime[i]) / 1000;
+                    uint32_t refNow = ctx.isGamePaused ? ctx.pauseStartTime : (ctx.isTimeOut ? ctx.gameOverTime : now);
+                    uint32_t el = (refNow > ctx.globalEventTime[i]) ? (refNow - ctx.globalEventTime[i]) / 1000 : 0;
                     uint32_t tgt = 0;
                     bool active = true;
                     if (m == 1 && t != TEAM_NEUTRAL) {
@@ -721,7 +775,9 @@ void drawPages(const PageContext& ctx) {
                     }
                 }
                 // Text status final
-                if (m == 1) {
+                if (offline) {
+                    strcpy(rows[count].status, "OFFLINE");
+                } else if (m == 1) {
                     if (t == TEAM_NEUTRAL)
                         strcpy(rows[count].status, "Neutral");
                     else if (showTime && hasTime)
@@ -758,8 +814,8 @@ void drawPages(const PageContext& ctx) {
                         rows[i] = rows[j];
                         rows[j] = tmp;
                     }
-                    uint8_t scroll = ctx.page4ScrollIndex;
-                if (count > 0 && scroll > count - 1) scroll = 0;
+                    uint8_t maxScroll = (count > 4) ? (count - 4) : 0;
+                uint8_t scroll = (maxScroll == 0) ? 0 : (ctx.page4ScrollIndex % (maxScroll + 1));
                 if (count == 0) {
                     display.setCursor(10, 30);
                     display.print("No active units ...");
@@ -790,15 +846,15 @@ void drawPages(const PageContext& ctx) {
         // ====================================================
         case 4: {
             uint32_t now = millis();
-            bool showBat = ((now / 3000) % 2 == 1);
+            bool showBattery = ((now / 3000) % 2 == 0);
             uint8_t activeUnits[MAX_UNITS];
             uint8_t count = 0;
             for (uint8_t i = 0; i < MAX_UNITS; i++) {
-                bool online = (ctx.lastSeenTime[i] > 0 && (now - ctx.lastSeenTime[i] <= 600000)) || (i == UNIT_ID - 1);
-                if (online) activeUnits[count++] = i;
+                bool everSeen = (ctx.lastSeenTime[i] > 0) || (i == UNIT_ID - 1);
+                if (everSeen) activeUnits[count++] = i;
             }
-            uint8_t scroll = ctx.page5ScrollIndex;
-            if (count > 0 && scroll > count - 1) scroll = 0;
+            uint8_t maxScroll = (count > 4) ? (count - 4) : 0;
+            uint8_t scroll = (maxScroll == 0) ? 0 : (ctx.page5ScrollIndex % (maxScroll + 1));
             if (count == 0) {
                 display.setCursor(10, 30);
                 display.print("No active units ...");
@@ -816,33 +872,22 @@ void drawPages(const PageContext& ctx) {
                         display.print("- ");
                     }
                     display.print(UNIT_NAMES[uid]);
-                    // Calcul text sync
-                    char syncText[15];
-                    bool isOffline = false;
-                    if (ctx.lastSeenTime[uid] == 0) {
-                        strcpy(syncText, "--");
-                        isOffline = true;
+                    bool offline = (ctx.lastSeenTime[uid] > 0) && (now - ctx.lastSeenTime[uid] > 1800000);
+                    if (offline) {
+                        const char* off = "OFFLINE";
+                        uint8_t tw = strlen(off) * 6;
+                        display.setCursor(SCREEN_WIDTH - tw - rightMargin, y);
+                        display.print(off);
+                    } else if (showBattery) {
+                        drawBatteryIcon(SCREEN_WIDTH - 20 - rightMargin, y, ctx.globalBattery[uid]);
                     } else {
-                        uint32_t el = (now - ctx.lastSeenTime[uid]) / 1000;
-                        if (el >= 70) {
-                            strcpy(syncText, "OFFLINE");
-                            isOffline = true;
-                        } else
-                            snprintf(syncText, sizeof(syncText), "%u sec", el);
-                    }
-                    if (showBat) {
-                        // Bateria se afiseaza mereu la randul ei, online sau offline
-                        uint8_t lv = ctx.globalBattery[uid];
-                        uint8_t batX = SCREEN_WIDTH - 21 - rightMargin;
-                        uint8_t batY = y - 1;
-                        display.fillRect(batX, batY + 2, 2, 5, SSD1306_WHITE);
-                        display.drawRect(batX + 2, batY, 19, 9, SSD1306_WHITE);
-                        for (uint8_t b = 0; b < lv; b++) {
-                            uint8_t bx = (batX + 16) - (b * 4);
-                            display.fillRect(bx, batY + 2, 3, 5, SSD1306_WHITE);
+                        char syncText[20];
+                        if (ctx.lastSeenTime[uid] == 0) {
+                            strcpy(syncText, "--");
+                        } else {
+                            uint32_t el = (now - ctx.lastSeenTime[uid]) / 1000;
+                            formatElapsed(el, syncText, sizeof(syncText));
                         }
-                    } else {
-                        // Textul: secundele de la ultimul pachet sau OFFLINE
                         uint8_t tw = strlen(syncText) * 6;
                         display.setCursor(SCREEN_WIDTH - tw - rightMargin, y);
                         display.print(syncText);
@@ -873,24 +918,20 @@ void drawPages(const PageContext& ctx) {
                 strcpy(line4, "** PAUSED **");
             } else if (ctx.isTimeOut) {
                 strcpy(line4, "GAME OVER!");
-            } else if (ctx.winCondition == WIN_BY_CONQUEST) {
+            } else if (!ctx.isGameTimerRunning) {
+                strcpy(line4, "YELLOW to START");
+            } else if (ctx.winCondition == WIN_BY_CONQUEST || ctx.gameTimeLeftSeconds == 0) {
                 strcpy(line4, "No time limit!");
             } else {
-                if (!ctx.isGameTimerRunning && ctx.gameTimeLeftSeconds == 0) {
-                    strcpy(line4, "No time limit!");
-                } else if (!ctx.isGameTimerRunning && ctx.gameTimeLeftSeconds > 0) {
-                    strcpy(line4, "YELLOW to START");
-                } else {
-                    uint8_t h = ctx.gameTimeLeftSeconds / 3600;
-                    uint8_t m = (ctx.gameTimeLeftSeconds % 3600) / 60;
-                    uint8_t s = ctx.gameTimeLeftSeconds % 60;
-                    if (h > 0)
-                        snprintf(line4, sizeof(line4), "%uh %02umin %02usec", h, m, s);
-                    else if (m > 0)
-                        snprintf(line4, sizeof(line4), "%umin %02usec", m, s);
-                    else
-                        snprintf(line4, sizeof(line4), "%usec", s);
-                }
+                uint8_t h = ctx.gameTimeLeftSeconds / 3600;
+                uint8_t m = (ctx.gameTimeLeftSeconds % 3600) / 60;
+                uint8_t s = ctx.gameTimeLeftSeconds % 60;
+                if (h > 0)
+                    snprintf(line4, sizeof(line4), "%uh %02umin %02usec", h, m, s);
+                else if (m > 0)
+                    snprintf(line4, sizeof(line4), "%umin %02usec", m, s);
+                else
+                    snprintf(line4, sizeof(line4), "%usec", s);
             }
 
             // Construim hint-ul
@@ -898,9 +939,9 @@ void drawPages(const PageContext& ctx) {
             if (!ctx.isTimeOut) {
                 if (ctx.isGamePaused)
                     hint = "YELLOW to resume";
-                else if (ctx.gameTimeLeftSeconds > 0 && !ctx.isGameTimerRunning)
-                    hint = "";  // line4 deja arata "YELLOW to START"
-                    else if (ctx.selectedMode != -1)
+                else if (!ctx.isGameTimerRunning)
+                    hint = "";  // neinceput -> line4 arata "YELLOW to START"
+                    else
                         hint = "YELLOW to pause";
             }
 
@@ -934,6 +975,7 @@ void drawPages(const PageContext& ctx) {
     }
     display.display();
 }
+
 void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) {
     display.clearDisplay();
     display.setTextSize(1);
@@ -1126,6 +1168,17 @@ void drawAdminSaved() {
     display.print(msg);
     display.display();
 }
+
+void drawPowerOffScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* msg = "Turning Off ...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
+    display.setCursor(x, 28);
+    display.print(msg);
+    display.display();
+}
+
 void drawTagWriter(uint8_t statusMsg) {
     display.clearDisplay();
     display.setTextSize(1);
@@ -1175,148 +1228,95 @@ void drawTagWriter(uint8_t statusMsg) {
     }
     display.display();
 }
-void drawBonusScreen(uint16_t points) {
+
+// ============================================================
+// drawActionScreen() — bara de progres pentru actiuni (hold)
+// ============================================================
+void drawActionScreen(ActionType actionType, uint8_t teamIndex, uint32_t elapsed, uint32_t totalMs) {
     display.clearDisplay();
-    display.setTextSize(2);
-    const char* l1 = "BONUS!";
-    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 12)) / 2;
-    display.setCursor(x, 16);
-    display.print(l1);
     display.setTextSize(1);
-    char buf[20];
-    snprintf(buf, sizeof(buf), "+%u points", points);
-    x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
-    display.setCursor(x, 40);
-    display.print(buf);
-    const char* l3 = "Congratulations!";
-    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
-    display.setCursor(x, 52);
-    display.print(l3);
+    const char* actText = "";
+    if (actionType == ACT_CAPTURE)        actText = "CAPTURING SECTOR...";
+    else if (actionType == ACT_NEUTRALIZE) actText = "NEUTRALIZING...";
+    else if (actionType == ACT_ARM)        actText = "ARMING BOMB...";
+    else if (actionType == ACT_DEFUSE)     actText = "DEFUSING BOMB...";
+    uint8_t x = (SCREEN_WIDTH - (strlen(actText) * 6)) / 2;
+    display.setCursor(x, 9);
+    display.print(actText);
+
+    const char* teamName = TEAM_NAMES[teamIndex];
+    x = (SCREEN_WIDTH - (strlen(teamName) * 6)) / 2;
+    display.setCursor(x, 21);
+    display.print(teamName);
+
+    display.drawRect(14, 35, 100, 12, SSD1306_WHITE);
+    uint8_t barW = (uint8_t)((uint32_t)96 * elapsed / totalMs);
+    if (barW > 96) barW = 96;
+    if (barW > 0) display.fillRect(16, 37, barW, 8, SSD1306_WHITE);
+
+    uint32_t remaining = (elapsed < totalMs) ? (totalMs - elapsed) / 1000 + 1 : 0;
+    char timeBuf[8];
+    snprintf(timeBuf, sizeof(timeBuf), "%us", remaining);
+    x = (SCREEN_WIDTH - (strlen(timeBuf) * 6)) / 2;
+    display.setCursor(x, 51);
+    display.print(timeBuf);
     display.display();
 }
+
+// ============================================================
+// drawSuccessScreen()
+// ============================================================
+void drawSuccessScreen() {
+    display.clearDisplay();
+    display.setTextSize(2);
+    const char* msg = "SUCCESS!";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 12)) / 2;
+    display.setCursor(x, 24);
+    display.print(msg);
+    display.display();
+}
+
+// ============================================================
+// drawBoomScreen()
+// ============================================================
+void drawBoomScreen() {
+    display.clearDisplay();
+    display.setTextSize(2);
+    const char* msg = "BOOOOOM!";
+    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 12)) / 2;
+    display.setCursor(x, 24);
+    display.print(msg);
+    display.display();
+}
+
+// ============================================================
+// drawWaitAdminTag() — confirmare actiune prin card admin
+// ============================================================
 void drawWaitAdminTag() {
     display.clearDisplay();
     display.setTextSize(1);
-
     const char* l1 = "Please present";
     uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
     display.setCursor(x, 24);
     display.print(l1);
-
     const char* l2 = "Admin tag ...";
     x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
     display.setCursor(x, 36);
     display.print(l2);
-
     display.display();
 }
 
-void drawLoadingScreen(uint32_t elapsed, uint32_t totalMs) {
-    display.clearDisplay();
-
-    // "LOADING ..." centrat vertical in jumatatea de sus
-    display.setTextSize(1);
-    const char* msg = "LOADING ...";
-    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
-    display.setCursor(x, 22);
-    display.print(msg);
-
-    // Bara de progres — contur
-    display.drawRect(14, 35, 100, 10, SSD1306_WHITE);
-
-    // Umplere fluida
-    uint8_t barW = (uint8_t)((uint32_t)96 * elapsed / totalMs);
-    if (barW > 96) barW = 96;
-    if (barW > 0) display.fillRect(16, 37, barW, 6, SSD1306_WHITE);
-
-    display.display();
+// ============================================================
+// setBrightness() — contrast OLED (0-255)
+// ============================================================
+void setBrightness(uint8_t level) {
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(level);
 }
 
-void drawSyncWarningScreen() {
-    display.clearDisplay();
-    display.setTextSize(1);
-    uint8_t x;
-    const char* l1 = "--- WARNING ---";
-    x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
-    display.setCursor(x, 0); display.print(l1);
-    const char* l2 = "All active units";
-    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
-    display.setCursor(x, 12); display.print(l2);
-    const char* l3 = "will sync data to";
-    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
-    display.setCursor(x, 22); display.print(l3);
-    const char* l4 = "match this unit.";
-    x = (SCREEN_WIDTH - (strlen(l4) * 6)) / 2;
-    display.setCursor(x, 32); display.print(l4);
-    const char* l5 = "Continue?";
-    x = (SCREEN_WIDTH - (strlen(l5) * 6)) / 2;
-    display.setCursor(x, 42); display.print(l5);
-    const char* l6 = "RED: No     BLUE: Yes";
-    x = (SCREEN_WIDTH - (strlen(l6) * 6)) / 2;
-    display.setCursor(x, 56); display.print(l6);
-    display.display();
-}
-
-void drawSyncingScreen() {
-    display.clearDisplay();
-    display.setTextSize(2);
-    const char* l1 = "SYNCING";
-    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 12)) / 2;
-    display.setCursor(x, 15);
-    display.print(l1);
-    display.setTextSize(1);
-    const char* l2 = "Please wait ...";
-    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
-    display.setCursor(x, 45);
-    display.print(l2);
-    display.display();
-}
-
-void drawReadyScreen(int8_t selectedMode) {
-    display.clearDisplay();
-
-    const char* l1 = "System Ready ...";
-    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
-    display.setTextSize(1);
-    display.setCursor(x, 10);
-    display.print(l1);
-
-    const char* l2 = "GOOD LUCK!";
-    display.setTextSize(2);
-    x = (SCREEN_WIDTH - (strlen(l2) * 12)) / 2;
-    display.setCursor(x, 24);
-    display.print(l2);
-
-    const char* l3 = selectedMode == 0 ? "Sector Unit" :
-    selectedMode == 1 ? "Bomb Unit"   :
-    "Respawn Unit";
-    display.setTextSize(1);
-    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
-    display.setCursor(x, 50);
-    display.print(l3);
-
-    display.display();
-}
-
-void drawSyncedScreen(uint8_t fromUnitId) {
-    display.clearDisplay();
-    display.setTextSize(2);
-
-    const char* l1 = "SYNCED!";
-    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 12)) / 2;
-    display.setCursor(x, 14);
-    display.print(l1);
-
-    display.setTextSize(1);
-    char buf[25];
-    snprintf(buf, sizeof(buf), "by unit %s", UNIT_NAMES[fromUnitId - 1]);
-    x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
-    display.setCursor(x, 44);
-    display.print(buf);
-
-    display.display();
-}
-
+// ============================================================
+// Ecrane KILL RESET
+// ============================================================
 void drawKillResetAdminScreen() {
     display.clearDisplay();
     display.setTextSize(1);
@@ -1390,12 +1390,23 @@ void drawKillResetDoneScreen(uint16_t points, uint8_t teamIndex, bool hasPoints)
     display.display();
 }
 
-void drawPowerOffScreen() {
+void drawBonusScreen(uint16_t points, uint8_t teamIndex) {
     display.clearDisplay();
+    display.setTextSize(2);
+    const char* l1 = "BONUS!";
+    uint8_t x = (SCREEN_WIDTH - (strlen(l1) * 12)) / 2;
+    display.setCursor(x, 12);
+    display.print(l1);
     display.setTextSize(1);
-    const char* msg = "Turning Off ...";
-    uint8_t x = (SCREEN_WIDTH - (strlen(msg) * 6)) / 2;
-    display.setCursor(x, 28);
-    display.print(msg);
+    char buf[20];
+    snprintf(buf, sizeof(buf), "+%u points", points);
+    x = (SCREEN_WIDTH - (strlen(buf) * 6)) / 2;
+    display.setCursor(x, 36);
+    display.print(buf);
+    char team[20];
+    snprintf(team, sizeof(team), "for %s", TEAM_NAMES[teamIndex - 1]);
+    x = (SCREEN_WIDTH - (strlen(team) * 6)) / 2;
+    display.setCursor(x, 50);
+    display.print(team);
     display.display();
 }

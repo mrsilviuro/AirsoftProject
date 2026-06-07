@@ -1,784 +1,210 @@
+// ============================================================
+// lora.cpp — Strat transport LoRa (DX-LR03) + ceas comun
+// ============================================================
 #include "lora.h"
+#include "game.h"   // valorile model (gameTimeLimitSeconds, bombTimerMs, ...)
+
+HardwareSerial LoRaSerial(1);   // UART1
+
+// --- Ceas + stare retea ---
+uint32_t localTime       = 0;
+uint8_t  loraTimeAction  = 0;
+uint16_t loraResumeTime  = 0;   // secunda primita in alerta de RESUME
+uint8_t  loraEvtUnit     = 0;
+uint8_t  loraEvtTeam     = 0;
+int32_t  loraEvtPoints   = 0;
+uint32_t lastLocalTick   = 0;
+bool     localTimePaused = false;
+bool     isSynced        = false;
+uint8_t  syncedByUnit    = 0;
+
+// Pachet SYNC: [NET][TYPE][UNIT][lt2][lt1][lt0][set x6][CRC] = 13 octeti
+#define SYNC_PKT_LEN 13
+#define RESTART_PKT_LEN 4       // [NET][TYPE][UNIT][CRC]
+#define MODE_PKT_LEN    6       // [NET][TYPE][UNIT][mode][team][CRC]
+#define TIME_PKT_LEN    4       // [NET][TYPE][UNIT][CRC] (tipul = actiunea)
+#define TIME_RESUME_PKT_LEN 6   // RESUME: [NET][TYPE][UNIT][sec_hi][sec_lo][CRC]
+#define CAPTURE_PKT_LEN 5       // [NET][TYPE][UNIT][team][CRC]
+#define NEUT_PKT_LEN    7       // [NET][TYPE][UNIT][team][pts_hi][pts_lo][CRC]
+#define RESPAWN_PKT_LEN 7       // [NET][TYPE][UNIT][team][kills_hi][kills_lo][CRC]
+#define BOMB_PKT_LEN    5       // [NET][TYPE][UNIT][team][CRC]
+#define KILLRESET_PKT_LEN 7     // [NET][TYPE][UNIT][winnerTeam][pts_hi][pts_lo][CRC]
+#define HEARTBEAT_PKT_LEN 4     // [NET][TYPE][UNIT][CRC] (bateria e deja in UNIT)
 
 // ============================================================
-// Obiect Serial LoRa
+// Bit-cursor: scriem/citim cate nbits, MSB-first, pe un buffer
 // ============================================================
-HardwareSerial LoRaSerial(1);
-
-// ============================================================
-// Variabile de stare — exportate prin lora.h
-// ============================================================
-char currentSyncID[4] = "---";
-bool isNetworkSynced = false;
-bool isMasterNode = false;
-bool loraTimerFrozen = false;
-bool   loraStartApplyNow  = false;
-bool   loraPauseApplyNow  = false;
-bool   loraResumeApplyNow = false;
-uint32_t loraStartTimeLeft = 0;
-
-bool    loraSyncJustReceived = false;
-uint8_t loraSyncFromUnit     = 1; // ← 1 in loc de 0, evitam index -1
-
-uint32_t syncEpochSeconds = 0;
-uint32_t lastEpochTick = 0;
-uint32_t syncReceivedTime = 0;
-bool hasTransmittedThisMinute = false;
-bool finalHeartbeatSent = false;
-
-int32_t  loraRxScores[4] = {0};
-uint16_t loraRxKills[4]  = {0};
-uint8_t globalUnitMode[MAX_UNITS] = {0};
-Team globalUnitStatus[MAX_UNITS];
-uint32_t lastSeenTime[MAX_UNITS] = {0};
-uint32_t globalEventTime[MAX_UNITS] = {0};
-uint8_t globalBattery[MAX_UNITS] = {4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4};
-
-uint8_t pendingEventType = EVT_NONE;
-uint8_t pendingEventTeam = 0;
-
-// ============================================================
-// Masina de stari pentru transmisie (non-blocking)
-// ============================================================
-enum TxState : uint8_t { TX_IDLE, TX_WAIT_AIR_FREE, TX_SENDING, TX_WAIT_DONE, TX_POST_ACTION };
-
-static TxState txState = TX_IDLE;
-static uint32_t txStateStart = 0;
-static uint32_t txTimeout = 3000;
-
-static byte txBuf[62] = {0};
-static uint8_t txLen = 0;
-static uint8_t txPktType = 0;
-
-// Jitter
-static bool jitterPending = false;
-static uint32_t jitterStart = 0;
-static uint32_t jitterDelay = 0;
-static uint8_t jitterPktType = 0;
-
-// EpochSync timer
-static uint32_t epochSyncTimer = 0;
-
-// Retransmisie
-static uint8_t retxCount = 0;
-static uint8_t retxMax = 0;
-static uint32_t retxDelay = 0;
-static uint32_t retxStart = 0;
-
-// Date salvate pentru transmisii programate
-static uint8_t s_gsTimeLimit, s_gsBonus, s_gsWinCond;
-static uint8_t s_bsTimerIdx, s_bsCooldownIdx, s_bsExpPtsIdx, s_bsDefPtsIdx;
-static uint8_t s_rsTimeIdx, s_rsPenaltyIdx, s_rsLimitIdx[4];
-static bool s_isRunning, s_isTimeOut, s_isPaused;
-static uint8_t s_gsActionIdx = 2;
-static uint32_t s_gameTimeLeft;
-static int32_t s_scores[4];
-static uint16_t s_kills[4];
-static uint8_t s_urgentEvent, s_urgentTeam;
-static uint8_t s_conquestWinner = 0;
-static int32_t s_penalties[4] = {0};
-static uint32_t s_lastTimerTick = 0;
-static uint32_t s_gameTimeLeftForPause = 0;
-
-bool    loraSettingsReceived = false;
-uint8_t rx_gsTimeLimit = 0, rx_gsBonus = 0, rx_gsWinCond = 0;
-uint8_t rx_bsTimerIdx = 0, rx_bsCooldownIdx = 0;
-uint8_t rx_bsExpPtsIdx = 0, rx_bsDefPtsIdx = 0;
-uint8_t rx_rsTimeIdx = 0, rx_rsPenaltyIdx = 0;
-uint8_t rx_rsLimitIdx[4] = {0};
-uint8_t rx_gsActionIdx = 2;
-
-bool loraSyncPaused = false;
-bool loraKillsResetReceived = false;
-bool loraTimeResetReceived = false;
-int32_t loraRxPenalties[4] = {0};
-bool loraSyncTimerReset = false;
-uint32_t loraStartGameTimeLeft = 0;
-uint32_t loraRxTimerTick = 0;
-uint32_t loraMasterTimerTick = 0;
-uint32_t loraGameTimeForPause = 0;
-
-// ============================================================
-// Helper — CRC
-// ============================================================
-static byte calcCRC(byte* buf, uint8_t len, bool useSyncID) {
-    byte crc = 0;
-    for (uint8_t i = 0; i < len; i++) crc ^= buf[i];
-    if (useSyncID) crc ^= currentSyncID[0] ^ currentSyncID[1] ^ currentSyncID[2];
-    return crc;
+static void putBits(uint8_t* buf, uint16_t& bitpos, uint32_t val, uint8_t nbits) {
+    for (int8_t b = nbits - 1; b >= 0; b--) {
+        uint16_t idx = bitpos >> 3;
+        uint8_t  off = 7 - (bitpos & 7);
+        if ((val >> b) & 1) buf[idx] |= (1 << off);
+        else                buf[idx] &= ~(1 << off);
+        bitpos++;
+    }
+}
+static uint32_t getBits(const uint8_t* buf, uint16_t& bitpos, uint8_t nbits) {
+    uint32_t val = 0;
+    for (uint8_t b = 0; b < nbits; b++) {
+        uint16_t idx = bitpos >> 3;
+        uint8_t  off = 7 - (bitpos & 7);
+        val = (val << 1) | ((buf[idx] >> off) & 1);
+        bitpos++;
+    }
+    return val;
 }
 
 // ============================================================
-// Helper — fereastra sigura pentru alerte
+// Coada TX non-blocant — alertele se trimit in background
 // ============================================================
-static bool inSafeWindow() {
-    if (!isNetworkSynced) return true;
-    if (millis() < lastEpochTick) return false;  // In grace period
+#define TX_QUEUE_SIZE 6
+#define TX_MAX_LEN    16
+static uint8_t  txQueue[TX_QUEUE_SIZE][TX_MAX_LEN];
+static uint8_t  txQueueLen[TX_QUEUE_SIZE];
+static uint8_t  txHead = 0, txTail = 0, txCount = 0;
+enum TxState { TX_IDLE, TX_START, TX_SENDING, TX_WAIT_DONE };
+static TxState  txState = TX_IDLE;
+static uint32_t txTimer = 0;
 
+// Heartbeat: keep-alive usor (doar nivelul bateriei, deja in unitByte) trimis la
+// 20-30 min de la ultima transmisie. ORICE alta alerta reseteaza timerul.
+static uint32_t nextHeartbeat = 0;   // 0 = neinitializat
+#define HB_MIN_MS  (20UL * 60000UL)
+#define HB_MAX_MS  (30UL * 60000UL)
+static void heartbeatReschedule() {
+    nextHeartbeat = millis() + HB_MIN_MS + (uint32_t)random(0, (long)(HB_MAX_MS - HB_MIN_MS) + 1);
+    if (nextHeartbeat == 0) nextHeartbeat = 1;   // 0 e rezervat pentru "neinitializat"
+}
+
+static void loraQueueSend(const uint8_t* buf, uint8_t len) {
+    if (len > TX_MAX_LEN || txCount >= TX_QUEUE_SIZE) return;
+    memcpy(txQueue[txTail], buf, len);
+    txQueueLen[txTail] = len;
+    txTail = (txTail + 1) % TX_QUEUE_SIZE;
+    txCount++;
+    heartbeatReschedule();   // orice transmisie reseteaza timerul de heartbeat
+}
+
+// A doua copie a unei alerte se trimite intr-un SLOT determinist pe baza UNIT_ID,
+// ca benzile celor 12 unitati sa fie disjuncte (copia a 2-a a doua unitati nu se mai
+// poate suprapune niciodata). SLOT > airtime maxim (la SF10 ~400ms).
+#define TX_DEFER_SIZE  6
+#define TX_SLOT_MS     700   // latimea slotului per unitate
+#define TX_SLOT_RAND   200   // variatie aleatoare in slot (SLOT - RAND > airtime)
+static uint8_t  deferBuf[TX_DEFER_SIZE][TX_MAX_LEN];
+static uint8_t  deferLen[TX_DEFER_SIZE];
+static uint32_t deferTime[TX_DEFER_SIZE] = {0};   // 0 = slot liber; altfel = momentul de eliberare (millis)
+
+// prima copie imediat + a doua programata cu jitter
+static void loraQueueSendDup(const uint8_t* buf, uint8_t len) {
+    loraQueueSend(buf, len);
+    if (len > TX_MAX_LEN) return;
+    for (uint8_t i = 0; i < TX_DEFER_SIZE; i++) {
+        if (deferTime[i] == 0) {
+            memcpy(deferBuf[i], buf, len);
+            deferLen[i]  = len;
+            uint32_t t = millis() + (uint32_t)UNIT_ID * TX_SLOT_MS + (uint32_t)random(0, TX_SLOT_RAND);
+            if (t == 0) t = 1;   // 0 e rezervat pentru "slot liber"
+            deferTime[i] = t;
+            return;
+        }
+    }
+    // niciun slot liber -> renuntam la a doua copie (prima a plecat deja)
+}
+
+// eliberam copiile intarziate ajunse la scadenta (apelat din loraTxUpdate)
+static void loraDeferUpdate() {
     uint32_t now = millis();
-    uint32_t msInCycle = (syncEpochSeconds * 1000) + (now - lastEpochTick);
-    uint32_t second = (msInCycle / 1000) % 60;
-    uint32_t msInSec = msInCycle % 1000;
-
-    for (uint8_t u = 0; u < MAX_UNITS; u++) {
-        uint32_t ws = u * 5;
-        // Ocupat: suntem in secunda de heartbeat
-        if (second == ws % 60) return false;
-        // Ocupat: suntem in ultimele 500ms inainte (pachetul nostru ar ajunge in fereastra)
-        if (second == (ws == 0 ? 59 : ws - 1) % 60 && msInSec >= 500) return false;
-    }
-    return true;
-}
-
-// ============================================================
-// Helper — jitter inteligent
-// ============================================================
-static uint32_t smartJitter(uint32_t pktDurationMs = 500) {
-    uint32_t now = millis();  // ← PRIMA linie
-    if (!isNetworkSynced) return random(5, 50);
-    if (now < lastEpochTick) return random(1000, 2000);
-    uint32_t msInCycle = (syncEpochSeconds * 1000) + (now - lastEpochTick);
-    uint32_t second = (msInCycle / 1000) % 60;
-    uint32_t msInSec = msInCycle % 1000;
-
-    for (uint8_t offset = 0; offset < 60; offset++) {
-        uint32_t testSec = (second + offset) % 60;
-        bool occupied = false;
-
-        // Verificam ca toata durata pachetului incape fara sa atinga o fereastra
-        uint32_t pktEndMs = (testSec * 1000) + (offset == 0 ? msInSec : 0) + pktDurationMs;
-        uint32_t pktEndSec = (pktEndMs / 1000) % 60;
-
-        for (uint8_t u = 0; u < MAX_UNITS; u++) {
-            uint32_t ws = u * 5;
-
-            // Fereastra de start e ocupata?
-            if (testSec == ws % 60) {
-                occupied = true;
-                break;
+    for (uint8_t i = 0; i < TX_DEFER_SIZE; i++) {
+        if (deferTime[i] != 0 && (int32_t)(now - deferTime[i]) >= 0) {
+            if (txCount < TX_QUEUE_SIZE) {       // doar daca avem loc in coada principala
+                loraQueueSend(deferBuf[i], deferLen[i]);
+                deferTime[i] = 0;                // eliberam slotul
             }
-            // Ultimele 500ms inainte de fereastra?
-            if (testSec == (ws == 0 ? 59 : ws - 1) % 60 && offset == 0 && msInSec >= 500) {
-                occupied = true;
-                break;
+            // altfel pastram slotul si reincercam la urmatorul loop
+        }
+    }
+}
+
+// nivelul bateriei locale impachetat cu UNIT_ID: bits[6:4]=baterie(0-4), bits[3:0]=unit
+static uint8_t unitByte() {
+    return ((globalBattery[UNIT_ID - 1] & 0x07) << 4) | (UNIT_ID & 0x0F);
+}
+
+void loraTxUpdate() {
+    loraDeferUpdate();
+    // Heartbeat: dupa sincronizare pornim timerul; la expirare trimitem keep-alive
+    if (isSynced) {
+        if (nextHeartbeat == 0) {
+            heartbeatReschedule();
+        } else if ((int32_t)(millis() - nextHeartbeat) >= 0) {
+            uint8_t hb[HEARTBEAT_PKT_LEN];
+            hb[0] = (uint8_t)NETWORK_ID;
+            hb[1] = PKT_HEARTBEAT;
+            hb[2] = unitByte();
+            uint8_t cs = 0;
+            for (uint8_t i = 0; i < HEARTBEAT_PKT_LEN - 1; i++) cs ^= hb[i];
+            hb[HEARTBEAT_PKT_LEN - 1] = cs;
+            loraQueueSendDup(hb, HEARTBEAT_PKT_LEN);   // dubla copie pt fiabilitate; reseteaza timerul
+        }
+    }
+    switch (txState) {
+        case TX_IDLE:
+            if (txCount > 0) { txState = TX_START; txTimer = millis(); }
+            break;
+        case TX_START:
+            if (digitalRead(PIN_LORA_AUX) == LOW) {
+                LoRaSerial.write(txQueue[txHead], txQueueLen[txHead]);
+                txTimer = millis();
+                txState = TX_SENDING;
+            } else if (millis() - txTimer > 3000) {   // modulul nu se elibereaza -> renuntam
+                txHead = (txHead + 1) % TX_QUEUE_SIZE; txCount--; txState = TX_IDLE;
             }
-            // Pachetul se termina in fereastra altcuiva?
-            if (pktEndSec == ws % 60) {
-                occupied = true;
-                break;
+            break;
+        case TX_SENDING:
+            if (digitalRead(PIN_LORA_AUX) == HIGH || millis() - txTimer > 200) {
+                txTimer = millis(); txState = TX_WAIT_DONE;
             }
-        }
-
-        if (!occupied) {
-            uint32_t msToWait = (offset * 1000);
-            if (msToWait >= msInSec)
-                msToWait -= msInSec;
-            else
-                msToWait = 0;
-            return msToWait + random(10, 100);
-        }
-    }
-
-    return random(500, 1000);
-}
-
-// ============================================================
-// Constructori pachete
-// ============================================================
-static void buildHeartbeat(
-    int32_t liveScore[4], uint16_t teamKills[4],
-    int32_t appliedPenalties[4],
-    uint8_t selectedMode, Team sectorOwner,
-    bool isBombArmed, Team respawnTeam,
-    uint8_t batteryPercent) {
-
-    memset(txBuf, 0, 32);
-    txBuf[0] = NETWORK_ID[0]; txBuf[1] = NETWORK_ID[1]; txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_HEARTBEAT;
-    txBuf[4] = UNIT_ID;
-
-    // Scoruri int32_t x4
-    for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 5 + i*4;
-        txBuf[b]   = (liveScore[i] >> 24) & 0xFF;
-        txBuf[b+1] = (liveScore[i] >> 16) & 0xFF;
-        txBuf[b+2] = (liveScore[i] >> 8)  & 0xFF;
-        txBuf[b+3] =  liveScore[i]        & 0xFF;
-    }
-
-    // Killuri uint16_t x4
-    for (uint8_t i = 0; i < 4; i++) {
-        txBuf[21 + i*2]     = (teamKills[i] >> 8) & 0xFF;
-        txBuf[21 + i*2 + 1] =  teamKills[i]       & 0xFF;
-    }
-
-    // Penalizari int32_t x4
-    for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 29 + i*4;
-        txBuf[b]   = (appliedPenalties[i] >> 24) & 0xFF;
-        txBuf[b+1] = (appliedPenalties[i] >> 16) & 0xFF;
-        txBuf[b+2] = (appliedPenalties[i] >> 8)  & 0xFF;
-        txBuf[b+3] =  appliedPenalties[i]        & 0xFF;
-    }
-
-    // Mode si status
-    uint8_t mode = 0;
-    if      (selectedMode == 0) mode = 1;
-    else if (selectedMode == 1) mode = 2;
-    else if (selectedMode == 2) mode = 3;
-
-    uint8_t status = 0;
-    if      (mode == 1) status = (uint8_t)sectorOwner;
-    else if (mode == 2) status = isBombArmed ? 9 : 0;
-    else if (mode == 3) status = (uint8_t)respawnTeam;
-
-    uint8_t batLvl = 0;
-    if      (batteryPercent >= 80) batLvl = 4;
-    else if (batteryPercent >= 60) batLvl = 3;
-    else if (batteryPercent >= 40) batLvl = 2;
-    else if (batteryPercent >= 20) batLvl = 1;
-
-    txBuf[45] = ((mode   & 0x0F) << 4) | (status & 0x0F);
-    txBuf[46] = ((batLvl & 0x0F) << 4) | (pendingEventType & 0x0F);
-    txBuf[47] = calcCRC(txBuf, 47, true);
-    txLen     = 48;
-    txPktType = PKT_HEARTBEAT;
-    }
-
-static void printTimingSuffix() {
-    if (!isNetworkSynced || millis() < lastEpochTick) {
-        Serial.println();
-        return;
-    }
-
-    uint32_t now       = millis();
-    uint32_t msInCycle = (syncEpochSeconds * 1000) + (now - lastEpochTick);
-    uint32_t cycleS    = (msInCycle / 1000) % 60;
-    uint32_t cycleMs   = msInCycle % 1000;
-
-    uint32_t elapsed   = now - syncReceivedTime;
-    uint32_t elM       = elapsed / 60000;
-    uint32_t elS       = (elapsed % 60000) / 1000;
-    uint32_t elMs      = elapsed % 1000;
-
-    Serial.print(" / Epoch: ");
-    Serial.print(cycleS); Serial.print("s ");
-    Serial.print(cycleMs); Serial.print("ms / Sync: ");
-    if (elM > 0) { Serial.print(elM); Serial.print("min "); }
-    Serial.print(elS); Serial.print("sec ");
-    Serial.print(elMs); Serial.println("ms");
-}
-
-static void buildSync() {
-    memset(txBuf, 0, 52);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_SYNC;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = currentSyncID[0];
-    txBuf[6] = currentSyncID[1];
-    txBuf[7] = currentSyncID[2];
-
-    txBuf[8] = ((s_gsTimeLimit & 0x0F) << 4) | (s_gsBonus & 0x0F);
-    txBuf[9] = ((s_bsTimerIdx & 0x0F) << 4) | (s_bsCooldownIdx & 0x0F);
-    txBuf[10] = ((s_bsExpPtsIdx & 0x0F) << 4) | (s_bsDefPtsIdx & 0x0F);
-    txBuf[11] = ((s_rsTimeIdx & 0x0F) << 4) | (s_rsPenaltyIdx & 0x0F);
-    txBuf[12] = ((s_rsLimitIdx[0] & 0x0F) << 4) | (s_rsLimitIdx[1] & 0x0F);
-    txBuf[13] = ((s_rsLimitIdx[2] & 0x0F) << 4) | (s_rsLimitIdx[3] & 0x0F);
-
-    uint8_t flags = 0;
-    if (s_isRunning) flags |= 0x80;
-    if (s_isTimeOut) flags |= 0x40;
-    flags |= (s_gsWinCond & 0x03) << 4;
-    if (s_isPaused) flags |= 0x08;
-    flags |= (s_gsActionIdx & 0x03);
-    txBuf[14] = flags;
-
-     txBuf[15] = (s_gameTimeLeft >> 24) & 0xFF;
-    txBuf[16] = (s_gameTimeLeft >> 16) & 0xFF;
-    txBuf[17] = (s_gameTimeLeft >> 8)  & 0xFF;
-    txBuf[18] =  s_gameTimeLeft        & 0xFF;
-    uint16_t msUntilNext = (uint16_t)(1000 - (millis() - s_lastTimerTick));  // ← millis() acum, la momentul transmisiei!
-    txBuf[19] = (msUntilNext >> 8) & 0xFF;
-    txBuf[20] =  msUntilNext       & 0xFF;
-
-    for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 21 + i * 4;
-        txBuf[b] = (s_scores[i] >> 24) & 0xFF;
-        txBuf[b + 1] = (s_scores[i] >> 16) & 0xFF;
-        txBuf[b + 2] = (s_scores[i] >> 8) & 0xFF;
-        txBuf[b + 3] = s_scores[i] & 0xFF;
-    }
-
-    for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 37 + i * 2;
-        txBuf[b] = (s_kills[i] >> 8) & 0xFF;
-        txBuf[b + 1] = s_kills[i] & 0xFF;
-    }
-
-    // Penalizari aplicate int32_t x4
-    for (uint8_t i = 0; i < 4; i++) {
-        uint8_t b = 45 + i*4;
-        txBuf[b]   = (s_penalties[i] >> 24) & 0xFF;
-        txBuf[b+1] = (s_penalties[i] >> 16) & 0xFF;
-        txBuf[b+2] = (s_penalties[i] >> 8)  & 0xFF;
-        txBuf[b+3] =  s_penalties[i]        & 0xFF;
-    }
-    txBuf[61] = calcCRC(txBuf, 61, true);
-    txLen     = 62;
-    txPktType = PKT_SYNC;
-}
-
-static void buildUrgent(uint8_t eventType, uint8_t teamId) {
-    memset(txBuf, 0, 7);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_URGENT;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = ((eventType & 0x0F) << 4) | (teamId & 0x0F);
-    txBuf[6] = calcCRC(txBuf, 6, true);
-    txLen = 7;
-    txPktType = PKT_URGENT;
-}
-
-static void buildUrgentPause(uint32_t timeLeft) {
-    memset(txBuf, 0, 11);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_URGENT;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = ((EVT_GAME_PAUSED & 0x0F) << 4) | 0x0F;  // 0x0F = flag "contine timp"
-    txBuf[6] = (timeLeft >> 24) & 0xFF;
-    txBuf[7] = (timeLeft >> 16) & 0xFF;
-    txBuf[8] = (timeLeft >> 8)  & 0xFF;
-    txBuf[9] =  timeLeft        & 0xFF;
-    txBuf[10] = calcCRC(txBuf, 10, true);
-    txLen = 11;
-    txPktType = PKT_URGENT;
-}
-
-static void buildEpochSync(uint32_t timeLeft) {
-    memset(txBuf, 0, 10);
-    txBuf[0] = NETWORK_ID[0]; txBuf[1] = NETWORK_ID[1]; txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_EPOCH_SYNC;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = (timeLeft >> 24) & 0xFF;
-    txBuf[6] = (timeLeft >> 16) & 0xFF;
-    txBuf[7] = (timeLeft >> 8)  & 0xFF;
-    txBuf[8] =  timeLeft        & 0xFF;
-    txBuf[9] = calcCRC(txBuf, 9, true);
-    txLen     = 10;
-    s_gameTimeLeft = timeLeft;  // salvam valoarea transmisa
-    txPktType = PKT_EPOCH_SYNC;
-}
-
-static void buildStart(uint32_t timeLeft) {
-    memset(txBuf, 0, 10);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_START;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = (timeLeft >> 24) & 0xFF;
-    txBuf[6] = (timeLeft >> 16) & 0xFF;
-    txBuf[7] = (timeLeft >> 8) & 0xFF;
-    txBuf[8] = timeLeft & 0xFF;
-    txBuf[9] = calcCRC(txBuf, 9, true);
-    txLen = 10;
-    txPktType = PKT_START;
-}
-
-static void buildConquest(uint8_t winnerTeam) {
-    memset(txBuf, 0, 7);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_CONQUEST;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = winnerTeam;
-    txBuf[6] = calcCRC(txBuf, 6, true);
-    txLen = 7;
-    txPktType = PKT_CONQUEST;
-}
-
-static void buildRestart() {
-    memset(txBuf, 0, 6);
-    txBuf[0] = NETWORK_ID[0];
-    txBuf[1] = NETWORK_ID[1];
-    txBuf[2] = NETWORK_ID[2];
-    txBuf[3] = PKT_RESTART;
-    txBuf[4] = UNIT_ID;
-    txBuf[5] = calcCRC(txBuf, 5, false);  // FARA SyncID
-    txLen = 6;
-    txPktType = PKT_RESTART;
-}
-
-// ============================================================
-// Porneste transmisia
-// ============================================================
-static void startTransmit() {
-    if (txState != TX_IDLE) return;
-    txState = TX_WAIT_AIR_FREE;
-    txStateStart = millis();
-    if (txPktType == PKT_EPOCH_SYNC || txPktType == PKT_START) loraTimerFrozen = true;
-}
-
-// ============================================================
-// Actiuni Trailing Edge — dupa ce transmisia s-a terminat
-// ============================================================
-static void onTransmitDone(bool& isTimeOut, bool& isGameTimerRunning, uint32_t& gameTimeLeftSeconds) {
-    uint32_t now = millis();
-    lastSeenTime[UNIT_ID - 1] = now;
-
-    if (txPktType == PKT_HEARTBEAT) {
-        Serial.print("[LORA] Heartbeat transmis. Unit "); Serial.print(UNIT_ID);
-        printTimingSuffix();
-        if (pendingEventType != EVT_NONE) {
-            Serial.print("[LORA] Piggyback livrat: ");
-            Serial.println(pendingEventType);
-            pendingEventType = EVT_NONE;
-            pendingEventTeam = 0;
-        }
-
-    } else if (txPktType == PKT_SYNC) {
-        Serial.print("[LORA] SYNC trimis. SyncID: "); Serial.println(currentSyncID);
-        syncReceivedTime         = now;
-        isNetworkSynced          = true;
-        isMasterNode             = true;
-        hasTransmittedThisMinute = false;
-        finalHeartbeatSent       = false;
-        syncEpochSeconds         = 59;
-        lastEpochTick            = now + 4000;
-        if (epochSyncTimer == 0) epochSyncTimer = now;
-        loraMasterTimerTick = millis() - (1000 - (millis() - s_lastTimerTick)) + 400;
-        loraSyncTimerReset = true;
-    } else if (txPktType == PKT_START) {
-        Serial.println("[LORA] START trimis.");
-        loraTimerFrozen   = false;
-        loraStartTimeLeft = s_gameTimeLeft;
-        loraStartApplyNow = true;
-        Serial.println("[START] Apply flag setat dupa AUX LOW!");
-    } else if (txPktType == PKT_URGENT) {
-        Serial.print("[LORA] Urgent trimis: ");
-        Serial.println(s_urgentEvent);
-        if (s_urgentEvent == EVT_GAME_PAUSED) {
-            loraPauseApplyNow = true;
-            Serial.println("[PAUSE] Aplicat dupa AUX LOW!");
-        } else if (s_urgentEvent == EVT_GAME_RESUMED) {
-            loraResumeApplyNow = true;
-            Serial.println("[RESUME] Aplicat dupa AUX LOW!");
-        }
-    } else if (txPktType == PKT_EPOCH_SYNC) {
-        Serial.println("[LORA] EpochSync trimis.");
-        loraTimerFrozen = false;
-        uint8_t mySecond = (UNIT_ID - 1) * 5;
-        syncEpochSeconds = mySecond;
-        lastEpochTick = now;
-        epochSyncTimer = now;
-        hasTransmittedThisMinute = true;
-        loraSyncTimerReset = true;
-    } else if (txPktType == PKT_CONQUEST || txPktType == PKT_RESTART) {
-        if (retxCount < retxMax) {
-            retxCount++;
-            retxStart = now;
-            // Retransmisia va fi initiata dupa retxDelay
-        }
-    }
-}
-
-// ============================================================
-// Procesare pachete receptionate
-// ============================================================
-static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t teamKills[4], bool& isTimeOut, bool& isGameTimerRunning, uint32_t& gameTimeLeftSeconds) {
-    if (buf[0] != NETWORK_ID[0] || buf[1] != NETWORK_ID[1] || buf[2] != NETWORK_ID[2]) return;
-
-    uint8_t pktType = buf[3];
-    uint8_t sender = buf[4];
-
-    if (sender == UNIT_ID) return;
-    if (sender < 1 || sender > MAX_UNITS) return;
-
-    // Verificare CRC
-    byte calcCrc = 0;
-    for (uint8_t i = 0; i < len - 1; i++) calcCrc ^= buf[i];
-
-    if (pktType == PKT_SYNC) {
-        calcCrc ^= buf[5] ^ buf[6] ^ buf[7];  // Noul SyncID din pachet
-    } else if (pktType != PKT_RESTART) {
-        calcCrc ^= currentSyncID[0] ^ currentSyncID[1] ^ currentSyncID[2];
-    }
-
-    if (calcCrc != buf[len - 1]) {
-        Serial.println("[LORA] CRC invalid. Ignorat.");
-        return;
-    }
-
-    Serial.print("[LORA] Pachet 0x0"); Serial.print(pktType, HEX);
-    Serial.print(" Unit "); Serial.print(sender);
-    printTimingSuffix();
-
-    uint32_t now = millis();
-    lastSeenTime[sender - 1] = now;
-
-    if (pktType == PKT_SYNC) {
-        currentSyncID[0] = buf[5];
-        currentSyncID[1] = buf[6];
-        currentSyncID[2] = buf[7];
-        currentSyncID[3] = '\0';
-
-        // Setari joc
-        rx_gsTimeLimit   = (buf[8]  >> 4) & 0x0F;
-        rx_gsBonus       =  buf[8]        & 0x0F;
-        rx_bsTimerIdx    = (buf[9]  >> 4) & 0x0F;
-        rx_bsCooldownIdx =  buf[9]        & 0x0F;
-        rx_bsExpPtsIdx   = (buf[10] >> 4) & 0x0F;
-        rx_bsDefPtsIdx   =  buf[10]       & 0x0F;
-        rx_rsTimeIdx     = (buf[11] >> 4) & 0x0F;
-        rx_rsPenaltyIdx  =  buf[11]       & 0x0F;
-        rx_rsLimitIdx[0] = (buf[12] >> 4) & 0x0F;
-        rx_rsLimitIdx[1] =  buf[12]       & 0x0F;
-        rx_rsLimitIdx[2] = (buf[13] >> 4) & 0x0F;
-        rx_rsLimitIdx[3] =  buf[13]       & 0x0F;
-        rx_gsWinCond     = (buf[14] >> 4) & 0x03;
-        loraSettingsReceived = true;
-
-        // Flags
-        bool isRunning  = (buf[14] & 0x80) != 0;
-        bool wasTimeOut = (buf[14] & 0x40) != 0;
-        bool wasPaused  = (buf[14] & 0x08) != 0;
-        rx_gsActionIdx = buf[14] & 0x03;
-        loraSyncPaused = wasPaused;
-
-        // Timp ramas
-        uint32_t timeLeft = ((uint32_t)buf[15] << 24) |
-        ((uint32_t)buf[16] << 16) |
-        ((uint32_t)buf[17] << 8)  |
-        buf[18];
-
-        for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 21 + i * 4;
-            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
-            ((int32_t)buf[b+1] << 16) |
-            ((int32_t)buf[b+2] << 8)  |
-            buf[b+3];
-            if (rx > loraRxScores[i]) loraRxScores[i] = rx;
-        }
-        for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 37 + i * 2;
-            uint16_t rx = ((uint16_t)buf[b] << 8) | buf[b+1];
-            if (rx > loraRxKills[i]) loraRxKills[i] = rx;
-        }
-
-        for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 45 + i*4;
-            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
-            ((int32_t)buf[b+1] << 16) |
-            ((int32_t)buf[b+2] << 8)  |
-            buf[b+3];
-            if (rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
-        }
-
-        uint16_t msUntilNext = ((uint16_t)buf[19] << 8) | buf[20];
-        if (msUntilNext > 1000) msUntilNext = 1000;
-        // Compensam latenta transmisiei (~400ms la SF9 pentru 62 bytes)
-        uint32_t latency = 400;
-        uint32_t elapsed = (1000 - msUntilNext) + latency;
-        if (elapsed >= 1000) {
-            // A trecut o secunda completa in timpul transmisiei
-            if (gameTimeLeftSeconds > 0) gameTimeLeftSeconds--;
-            elapsed -= 1000;
-        }
-        loraRxTimerTick = millis() - elapsed;
-
-        if (isRunning) {
-            isGameTimerRunning  = true;
-            gameTimeLeftSeconds = timeLeft;
-            loraSyncTimerReset  = false;
-        } else if (wasTimeOut) {
-            isTimeOut           = true;
-            isGameTimerRunning  = false;
-            gameTimeLeftSeconds = 0;
-        } else {
-            // Joc configurat dar nepornit — aplicam timpul setat
-            isGameTimerRunning  = false;
-            gameTimeLeftSeconds = timeLeft;
-        }
-
-        // Trailing Edge sync
-        syncReceivedTime         = now;
-        isNetworkSynced          = true;
-        isMasterNode             = false;
-        hasTransmittedThisMinute = false;
-        finalHeartbeatSent       = false;
-        syncEpochSeconds         = 59;
-        lastEpochTick            = now + 4000;
-
-        loraSyncJustReceived = true;
-        loraSyncFromUnit     = sender;
-        loraSyncTimerReset = true;
-
-        Serial.print("[LORA] SYNC primit. SyncID: ");
-        Serial.println(currentSyncID);
-    } else if (pktType == PKT_START) {
-        if (!isGameTimerRunning) {
-            uint32_t timeLeft = ((uint32_t)buf[5] << 24) | ((uint32_t)buf[6] << 16) |
-            ((uint32_t)buf[7] << 8)  |  buf[8];
-            loraStartTimeLeft  = timeLeft;
-            loraStartApplyNow  = true;
-            tone(PIN_BUZZER, 1500, 500);
-            Serial.println("[LORA] START primit!");
-        }
-    } else if (pktType == PKT_HEARTBEAT) {
-        // Scoruri int32_t
-        for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 5 + i*4;
-            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
-            ((int32_t)buf[b+1] << 16) |
-            ((int32_t)buf[b+2] << 8)  |
-            buf[b+3];
-            if (rx > loraRxScores[i]) loraRxScores[i] = rx;
-        }
-
-        // Killuri uint16_t
-        for (uint8_t i = 0; i < 4; i++) {
-            uint16_t rx = ((uint16_t)buf[21 + i*2] << 8) | buf[22 + i*2];
-            if (rx > loraRxKills[i]) loraRxKills[i] = rx;
-        }
-
-        // Penalizari int32_t
-        for (uint8_t i = 0; i < 4; i++) {
-            uint8_t b = 29 + i*4;
-            int32_t rx = ((int32_t)(int8_t)buf[b]   << 24) |
-            ((int32_t)buf[b+1] << 16) |
-            ((int32_t)buf[b+2] << 8)  |
-            buf[b+3];
-            if (rx > loraRxPenalties[i]) loraRxPenalties[i] = rx;
-        }
-
-        uint8_t mode   = (buf[45] >> 4) & 0x0F;
-        uint8_t status =  buf[45]       & 0x0F;
-        globalUnitMode[sender-1] = mode;
-        if      (mode == 1) globalUnitStatus[sender-1] = (Team)status;
-        else if (mode == 2) globalUnitStatus[sender-1] = (status == 9) ? TEAM_PLANTED : TEAM_NEUTRAL;
-        else if (mode == 3) globalUnitStatus[sender-1] = (Team)status;
-        else                globalUnitStatus[sender-1] = TEAM_NEUTRAL;
-
-        globalBattery[sender-1] = (buf[46] >> 4) & 0x0F;
-        uint8_t piggy           =  buf[46]       & 0x0F;
-        if (piggy != EVT_NONE) {
-            if (piggy == EVT_SECTOR_CAPTURED)
-                globalEventTime[sender-1] = now;
-            else if (piggy == EVT_SECTOR_NEUTRAL)
-                globalEventTime[sender-1] = 0;
-            else if (piggy == EVT_BOMB_ARMED) {
-                if (globalUnitStatus[sender-1] != TEAM_PLANTED)
-                    globalEventTime[sender-1] = now;
+            break;
+        case TX_WAIT_DONE:
+            if (digitalRead(PIN_LORA_AUX) == LOW || millis() - txTimer > 2000) {
+                lastSeenTime[UNIT_ID - 1] = millis();   // am transmis -> "ultimul semnal" local (pag.5)
+                heartbeatReschedule();                  // sincronizarea e si ea o transmisie
+                txHead = (txHead + 1) % TX_QUEUE_SIZE; txCount--; txState = TX_IDLE;
             }
-            else if (piggy == EVT_BOMB_DEFUSED || piggy == EVT_BOMB_EXPLODED) {
-                if (globalUnitStatus[sender-1] == TEAM_PLANTED)
-                    globalEventTime[sender-1] = now;
-            }
-            // EVT_GAME_PAUSED, EVT_GAME_RESUMED, EVT_KILLS_RESET, EVT_TIME_RESET
-            // NU se proceseaza din piggyback — au propriul PKT_URGENT
-        }
-    } else if (pktType == PKT_URGENT) {
-        uint8_t eType = (buf[5] >> 4) & 0x0F;
-        uint8_t teamId = buf[5] & 0x0F;
-
-        Serial.print("[LORA] Urgent ");
-        Serial.print(eType);
-        Serial.print(" team ");
-        Serial.print(teamId);
-        Serial.print(" Unit ");
-        Serial.println(sender);
-
-        if (eType == EVT_SECTOR_CAPTURED) {
-            globalUnitStatus[sender - 1] = (Team)teamId;
-            globalEventTime[sender - 1] = now;
-            globalUnitMode[sender - 1] = 1;
-        } else if (eType == EVT_SECTOR_NEUTRAL) {
-            globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
-            globalEventTime[sender - 1] = 0;
-        } else if (eType == EVT_BOMB_ARMED) {
-            if (globalUnitStatus[sender-1] != TEAM_PLANTED)
-                globalEventTime[sender-1] = now;
-            globalUnitStatus[sender-1] = TEAM_PLANTED;
-            globalUnitMode[sender-1] = 2;
-        } else if (eType == EVT_BOMB_DEFUSED || eType == EVT_BOMB_EXPLODED) {
-            if (globalUnitStatus[sender-1] == TEAM_PLANTED)
-                globalEventTime[sender-1] = now;
-            globalUnitStatus[sender-1] = TEAM_NEUTRAL;
-        } else if (eType == EVT_MODE_SECTOR) {
-            globalUnitMode[sender - 1] = 1;
-            globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
-        } else if (eType == EVT_MODE_BOMB) {
-            globalUnitMode[sender - 1] = 2;
-            globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
-        } else if (eType == EVT_MODE_RESPAWN) {
-            globalUnitMode[sender - 1] = 3;
-            globalUnitStatus[sender - 1] = (Team)teamId;
-        } else if (eType == EVT_MODE_UNSET) {
-            globalUnitMode[sender - 1] = 0;
-            globalUnitStatus[sender - 1] = TEAM_NEUTRAL;
-            globalEventTime[sender - 1] = 0;
-        } else if (eType == EVT_GAME_PAUSED) {
-            // Verificam daca pachetul contine si gameTimeLeftSeconds (teamId == 0x0F)
-            if (teamId == 0x0F && len == 11) {
-                uint32_t rxTime = ((uint32_t)buf[6] << 24) |
-                ((uint32_t)buf[7] << 16) |
-                ((uint32_t)buf[8] << 8)  |
-                buf[9];
-                if (rxTime > 0) gameTimeLeftSeconds = rxTime;
-                Serial.print("[LORA] PAUSE primit cu timp: ");
-                Serial.println(rxTime);
-            } else {
-                Serial.println("[LORA] PAUSE primit!");
-            }
-            loraPauseApplyNow = true;
-        } else if (eType == EVT_GAME_RESUMED) {
-            loraResumeApplyNow = true;
-            Serial.println("[LORA] RESUME primit!");
-        } else if (eType == EVT_KILLS_RESET) {
-            loraKillsResetReceived = true;
-            Serial.println("[LORA] KILLS RESET primit!");
-        } else if (eType == EVT_TIME_RESET) {
-            loraTimeResetReceived = true;
-            Serial.println("[LORA] TIME RESET primit!");
-        }
-
-    } else if (pktType == PKT_EPOCH_SYNC) {
-        uint32_t masterSecond    = (sender - 1) * 5;
-        syncEpochSeconds         = masterSecond;
-        lastEpochTick            = now;
-        hasTransmittedThisMinute = false;
-
-        uint32_t rxTime = ((uint32_t)buf[5] << 24) |
-        ((uint32_t)buf[6] << 16) |
-        ((uint32_t)buf[7] << 8)  |
-        buf[8];
-        if (isGameTimerRunning && rxTime > 0) {
-            gameTimeLeftSeconds = rxTime;
-            loraSyncTimerReset = true;  // resetam lastTimerTick la momentul receptiei
-        }
-
-        Serial.print("[LORA] EpochSync -> secunda "); Serial.println(masterSecond);
-    } else if (pktType == PKT_RESTART) {
-        // Semnalam prin valoare speciala — .ino face restart-ul
-        lastSeenTime[sender - 1] = 0xFFFFFFFF;
-        Serial.println("[LORA] RESTART primit!");
-
-    } else if (pktType == PKT_CONQUEST) {
-        if (!isTimeOut) {
-            isTimeOut = true;
-            isGameTimerRunning = false;
-            Serial.print("[LORA] CONQUEST! Winner: ");
-            Serial.println(buf[5]);
-            tone(PIN_BUZZER, 1800, 600);
-        }
+            break;
     }
+}
+
+// ============================================================
+// applySettingsFromIndices() — converteste indecsii in valori
+// (aceleasi tabele de optiuni ca la "CONFIRM" din admin)
+// ============================================================
+static void applySettingsFromIndices() {
+    const uint32_t tl[] = {0, 900, 1800, 3600, 7200, 10800, 14400, 18000, 21600, 25200, 28800, 32400, 36000, 39600, 43200, 86400};
+    const uint16_t bn[] = {0, 15, 30, 60, 120, 180, 240};
+    const uint32_t at[] = {5000, 10000, 15000, 20000};
+    const uint32_t tv[] = {5, 10, 15, 20, 30, 45, 60, 120};
+    const uint32_t pv[] = {50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000};
+    const uint32_t ts[] = {10, 30, 60, 120, 180, 240, 300, 600, 900, 1200, 1500, 1800};
+    const uint16_t pp[] = {0, 5, 10, 25, 50, 75, 100};
+    const uint16_t lm[] = {0, 10, 25, 50, 75, 100, 200, 300, 400, 500, 1000};
+
+    gameTimeLimitSeconds = tl[gsTimeLimit];
+    bonusIntervalMinutes = bn[gsBonus];
+    currentWinCondition  = (WinCondition)gsWinCond;
+    actionTimeMs         = at[gsActionIdx];
+    bombTimerMs          = tv[bsTimerIdx] * 60000UL;
+    cooldownMs           = tv[bsCooldownIdx] * 60000UL;
+    bombPointsExplode    = pv[bsExpPtsIdx];
+    bombPointsDefuse     = pv[bsDefPtsIdx];
+    respawnTimeMs        = ts[rsTimeIdx] * 1000UL;
+    respawnPenaltyPoints = pp[rsPenaltyIdx];
+    for (uint8_t i = 0; i < 4; i++) teamMaxRespawns[i] = lm[rsLimitIdx[i]];
+
+    // ceasul live preia limita doar daca jocul nu e in desfasurare
+    if (!isGameTimerRunning && !isGamePaused && !isTimeOut)
+        gameTimeLeftSeconds = gameTimeLimitSeconds;
 }
 
 // ============================================================
@@ -787,373 +213,450 @@ static void processPacket(byte* buf, uint8_t len, int32_t liveScore[4], uint16_t
 void loraInit() {
     pinMode(PIN_LORA_AUX, INPUT);
     LoRaSerial.begin(LORA_BAUD_RATE, SERIAL_8N1, PIN_LORA_RX, PIN_LORA_TX);
-    randomSeed(analogRead(36) + millis());
-
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
-    currentSyncID[3] = '\0';
-
-    for (uint8_t i = 0; i < MAX_UNITS; i++) globalUnitStatus[i] = TEAM_NEUTRAL;
-
-    Serial.print("[LORA] Init. SyncID izolat: ");
-    Serial.println(currentSyncID);
+    localTime     = 0;
+    lastLocalTick = millis();
+    Serial.println("[LORA] Init UART.");
 }
 
 // ============================================================
-// loraUpdate()
+// loraTick() — +1 secunda la localTime (daca nu e pe pauza)
 // ============================================================
-void loraUpdate(int32_t liveScore[4], uint16_t teamKills[4], int32_t  appliedPenalties[4], uint8_t selectedMode, Team sectorOwner, bool isBombArmed, Team respawnTeam, uint8_t batteryPercent, bool& isTimeOut, bool& isGameTimerRunning, uint32_t& gameTimeLeftSeconds) {
+void loraTick() {
+    if (localTimePaused) return;
+    uint32_t now = millis();
+    if (now - lastLocalTick >= 1000) {
+        localTime++;
+        lastLocalTick += 1000;
+    }
+}
+
+// ============================================================
+// buildSyncPacket()
+// ============================================================
+static void buildSyncPacket(uint8_t* buf) {
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_SYNC;
+    buf[2] = UNIT_ID;
+    buf[3] = (localTime >> 16) & 0xFF;
+    buf[4] = (localTime >> 8) & 0xFF;
+    buf[5] =  localTime        & 0xFF;
+
+    for (uint8_t i = 6; i < 12; i++) buf[i] = 0;
+    uint16_t bit = 0;
+    putBits(&buf[6], bit, gsTimeLimit,   4);
+    putBits(&buf[6], bit, gsWinCond,     2);
+    putBits(&buf[6], bit, gsActionIdx,   2);
+    putBits(&buf[6], bit, gsBonus,       3);
+    putBits(&buf[6], bit, bsTimerIdx,    3);
+    putBits(&buf[6], bit, bsCooldownIdx, 3);
+    putBits(&buf[6], bit, bsExpPtsIdx,   4);
+    putBits(&buf[6], bit, bsDefPtsIdx,   4);
+    putBits(&buf[6], bit, rsTimeIdx,     4);
+    putBits(&buf[6], bit, rsPenaltyIdx,  3);
+    putBits(&buf[6], bit, rsLimitIdx[0], 4);
+    putBits(&buf[6], bit, rsLimitIdx[1], 4);
+    putBits(&buf[6], bit, rsLimitIdx[2], 4);
+    putBits(&buf[6], bit, rsLimitIdx[3], 4);
+
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < SYNC_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[SYNC_PKT_LEN - 1] = cs;
+}
+
+// ============================================================
+// loraSendSyncBlocking() — pauza ceas -> trimite -> AUX LOW -> reia
+// ============================================================
+void loraSendSyncBlocking() {
+    // golim coada TX inainte (timp curat pentru sincronizare)
+    uint32_t t0 = millis();
+    while ((txCount > 0 || txState != TX_IDLE) && millis() - t0 < 3000) loraTxUpdate();
+
+    localTimePaused = true;             // inghetam ceasul cat dureaza transmisia
+    uint8_t txBuf[SYNC_PKT_LEN];
+    buildSyncPacket(txBuf);
+
+    uint32_t t = millis();
+    while (digitalRead(PIN_LORA_AUX) == HIGH && millis() - t < 2000) { }  // aer liber (AUX LOW)
+    LoRaSerial.write(txBuf, SYNC_PKT_LEN);
+    LoRaSerial.flush();
+    t = millis();
+    while (digitalRead(PIN_LORA_AUX) == LOW  && millis() - t < 200)  { }  // inceput transmisie (AUX HIGH)
+    t = millis();
+    while (digitalRead(PIN_LORA_AUX) == HIGH && millis() - t < 2000) { }  // final (trailing edge: AUX LOW)
+
+    localTimePaused = false;            // livrat -> reluam numaratoarea
+    lastLocalTick   = millis();
+    isSynced        = true;
+    lastSeenTime[UNIT_ID - 1] = millis();   // am transmis -> "ultimul semnal" local (pag.5)
+    Serial.print("[LORA] SYNC trimis @localTime=");
+    Serial.println(localTime);
+}
+
+// ============================================================
+// loraSendRestartBlocking() — anunta reteaua, apoi unitatea da reboot
+// ============================================================
+void loraSendRestart() {
+    if (!isSynced) return;   // OFFLINE: nu transmitem alerte
+    uint8_t buf[RESTART_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_RESTART;
+    buf[2] = unitByte();
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < RESTART_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[RESTART_PKT_LEN - 1] = cs;
+    loraQueueSend(buf, RESTART_PKT_LEN);
+    loraQueueSend(buf, RESTART_PKT_LEN);   // de 2x pentru siguranta
+    Serial.println("[LORA] RESTART pus in coada.");
+}
+
+// ============================================================
+// loraSendModeBlocking() — anunta modul ales (sau 0 = UNKNOWN la change mode)
+// ============================================================
+void loraSendMode(uint8_t mode, uint8_t team) {
+    if (!isSynced) return;   // OFFLINE: nu transmitem alerte
+    uint8_t buf[MODE_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_MODE;
+    buf[2] = unitByte();
+    buf[3] = mode;
+    buf[4] = team;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < MODE_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[MODE_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, MODE_PKT_LEN);
+    Serial.print("[LORA] MODE pus in coada: mode="); Serial.print(mode);
+    Serial.print(" team="); Serial.println(team);
+}
+
+// ============================================================
+// loraSendTime() — alerta de timp (start/pauza/resume/reset), NON-BLOCANT.
+// Pune pachetul in coada; expeditorul isi aplica actiunea cand coada s-a
+// golit (loraTxIdle() == true, adica AUX a redevenit LOW dupa transmisie).
+// ============================================================
+void loraSendTime(uint8_t pktType, uint16_t timeVal) {
+    if (!isSynced) return;   // OFFLINE: standalone, nu transmite
+    if (pktType == PKT_TIME_RESUME) {
+        uint8_t buf[TIME_RESUME_PKT_LEN];
+        buf[0] = (uint8_t)NETWORK_ID;
+        buf[1] = pktType;
+        buf[2] = unitByte();
+        buf[3] = (timeVal >> 8) & 0xFF;
+        buf[4] = timeVal & 0xFF;
+        uint8_t cs = 0;
+        for (uint8_t i = 0; i < TIME_RESUME_PKT_LEN - 1; i++) cs ^= buf[i];
+        buf[TIME_RESUME_PKT_LEN - 1] = cs;
+        loraQueueSendDup(buf, TIME_RESUME_PKT_LEN);
+    } else {
+        uint8_t buf[TIME_PKT_LEN];
+        buf[0] = (uint8_t)NETWORK_ID;
+        buf[1] = pktType;
+        buf[2] = unitByte();
+        uint8_t cs = 0;
+        for (uint8_t i = 0; i < TIME_PKT_LEN - 1; i++) cs ^= buf[i];
+        buf[TIME_PKT_LEN - 1] = cs;
+        loraQueueSendDup(buf, TIME_PKT_LEN);
+    }
+    Serial.print("[LORA] TIME pus in coada, type="); Serial.println(pktType);
+}
+
+bool loraTxIdle() { return txCount == 0 && txState == TX_IDLE; }
+
+// ============================================================
+// loraSendCapture() / loraSendNeutralize() — alerte sector (background)
+// ============================================================
+void loraSendCapture(uint8_t team) {
+    if (!isSynced) return;
+    uint8_t buf[CAPTURE_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_CAPTURE;
+    buf[2] = unitByte();
+    buf[3] = team;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < CAPTURE_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[CAPTURE_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, CAPTURE_PKT_LEN);
+    Serial.print("[LORA] CAPTURE pus in coada, team="); Serial.println(team);
+}
+
+void loraSendNeutralize(uint8_t team, int32_t points) {
+    if (!isSynced) return;
+    uint16_t p = (points < 0) ? 0 : (points > 65535 ? 65535 : (uint16_t)points);
+    uint8_t buf[NEUT_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_NEUTRALIZE;
+    buf[2] = unitByte();
+    buf[3] = team;
+    buf[4] = (p >> 8) & 0xFF;
+    buf[5] = p & 0xFF;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < NEUT_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[NEUT_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, NEUT_PKT_LEN);
+    Serial.print("[LORA] NEUTRALIZE pus in coada, team="); Serial.print(team);
+    Serial.print(" pts="); Serial.println(p);
+}
+
+void loraSendRespawn(uint8_t team, uint16_t totalKills) {
+    if (!isSynced) return;
+    uint8_t buf[RESPAWN_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_RESPAWN;
+    buf[2] = unitByte();
+    buf[3] = team;
+    buf[4] = (totalKills >> 8) & 0xFF;
+    buf[5] = totalKills & 0xFF;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < RESPAWN_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[RESPAWN_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, RESPAWN_PKT_LEN);
+    Serial.print("[LORA] RESPAWN pus in coada, team="); Serial.print(team);
+    Serial.print(" totalKills="); Serial.println(totalKills);
+}
+
+void loraSendBombPlant(uint8_t team) {
+    if (!isSynced) return;
+    uint8_t buf[BOMB_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_BOMB_PLANT;
+    buf[2] = unitByte();
+    buf[3] = team;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < BOMB_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[BOMB_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, BOMB_PKT_LEN);
+    Serial.print("[LORA] BOMB PLANT pus in coada, team="); Serial.println(team);
+}
+
+void loraSendBombDefuse(uint8_t team) {
+    if (!isSynced) return;
+    uint8_t buf[BOMB_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_BOMB_DEFUSE;
+    buf[2] = unitByte();
+    buf[3] = team;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < BOMB_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[BOMB_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, BOMB_PKT_LEN);
+    Serial.print("[LORA] BOMB DEFUSE pus in coada, team="); Serial.println(team);
+}
+
+void loraSendKillReset(uint8_t winnerTeam, uint16_t pts) {
+    if (!isSynced) return;
+    uint8_t buf[KILLRESET_PKT_LEN];
+    buf[0] = (uint8_t)NETWORK_ID;
+    buf[1] = PKT_KILLRESET;
+    buf[2] = unitByte();
+    buf[3] = winnerTeam;                  // 0 = fara puncte, 1..4 = castigator
+    buf[4] = (pts >> 8) & 0xFF;
+    buf[5] = pts & 0xFF;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < KILLRESET_PKT_LEN - 1; i++) cs ^= buf[i];
+    buf[KILLRESET_PKT_LEN - 1] = cs;
+    loraQueueSendDup(buf, KILLRESET_PKT_LEN);
+    Serial.print("[LORA] KILLRESET pus in coada, winner="); Serial.print(winnerTeam);
+    Serial.print(" pts="); Serial.println(pts);
+}
+
+// ============================================================
+// loraPoll() — citeste UART; intoarce evenimentul primit
+// ============================================================
+LoraEvent loraPoll() {
+    static uint8_t  rxBuf[16];
+    static uint8_t  rxCount = 0;
+    static uint8_t  rxLen   = 0;   // lungime asteptata (0 = inca necunoscuta)
+    static uint32_t rxStart = 0;
     uint32_t now = millis();
 
-    // --------------------------------------------------------
-    // 1. RECEPTIE — masina de stari
-    // --------------------------------------------------------
-    static byte rxBuf[62] = {0};
-    static uint8_t  rxLen      = 0;   // cati bytes asteptam
-    static uint8_t  rxCount    = 0;   // cati bytes am primit
-    static uint32_t rxStart    = 0;   // cand a inceput receptia
-
-    // Aruncam bytes invalizi pana la NetworkID[0]
-    while (LoRaSerial.available() > 0 &&
-        rxCount == 0 &&
-        LoRaSerial.peek() != (byte)NETWORK_ID[0]) {
+    // aruncam bytes pana la markerul NETWORK_ID
+    while (LoRaSerial.available() && rxCount == 0 &&
+        (uint8_t)LoRaSerial.peek() != (uint8_t)NETWORK_ID)
         LoRaSerial.read();
+
+    while (LoRaSerial.available() && rxCount < sizeof(rxBuf) &&
+        (rxLen == 0 || rxCount < rxLen)) {
+        rxBuf[rxCount++] = LoRaSerial.read();
+    if (rxCount == 1) rxStart = now;
+    if (rxCount == 2) {            // tipul e cunoscut -> stim lungimea
+        if      (rxBuf[1] == PKT_SYNC)    rxLen = SYNC_PKT_LEN;
+        else if (rxBuf[1] == PKT_RESTART) rxLen = RESTART_PKT_LEN;
+        else if (rxBuf[1] == PKT_MODE)    rxLen = MODE_PKT_LEN;
+        else if (rxBuf[1] == PKT_TIME_RESUME) rxLen = TIME_RESUME_PKT_LEN;
+        else if (rxBuf[1] >= PKT_TIME_START && rxBuf[1] <= PKT_TIME_RESET) rxLen = TIME_PKT_LEN;
+        else if (rxBuf[1] == PKT_CAPTURE)    rxLen = CAPTURE_PKT_LEN;
+        else if (rxBuf[1] == PKT_NEUTRALIZE) rxLen = NEUT_PKT_LEN;
+        else if (rxBuf[1] == PKT_RESPAWN)    rxLen = RESPAWN_PKT_LEN;
+        else if (rxBuf[1] == PKT_BOMB_PLANT || rxBuf[1] == PKT_BOMB_DEFUSE) rxLen = BOMB_PKT_LEN;
+        else if (rxBuf[1] == PKT_KILLRESET) rxLen = KILLRESET_PKT_LEN;
+        else if (rxBuf[1] == PKT_HEARTBEAT) rxLen = HEARTBEAT_PKT_LEN;
+        else { rxCount = 0; rxLen = 0; break; }   // tip necunoscut -> resync
+    }
         }
 
-        // Citim ce avem disponibil in buffer
-        while (LoRaSerial.available() > 0 && rxCount < 62) {
-            rxBuf[rxCount++] = LoRaSerial.read();
+        if (rxCount > 0 && (rxLen == 0 || rxCount < rxLen) && now - rxStart > 500) { rxCount = 0; rxLen = 0; return LORA_EVT_NONE; }
+        if (rxLen == 0 || rxCount < rxLen) return LORA_EVT_NONE;
 
-            // Dupa primul byte, initializam timerul
-            if (rxCount == 1) rxStart = now;
+        uint8_t type = rxBuf[1];
+    uint8_t len  = rxLen;
+    rxCount = 0; rxLen = 0;            // pachet complet — il consumam
 
-            // Dupa 4 bytes stim tipul si lungimea asteptata
-            if (rxCount == 4) {
-                uint8_t pktType = rxBuf[3];
-                rxLen = 7; // default urgent
-                if      (pktType == PKT_SYNC)       rxLen = 62;
-                else if (pktType == PKT_HEARTBEAT)  rxLen = 48;
-                else if (pktType == PKT_START)      rxLen = 10;
-                else if (pktType == PKT_EPOCH_SYNC) rxLen = 10;
-                else if (pktType == PKT_RESTART)    rxLen = 6;
-                else if (pktType == PKT_CONQUEST)   rxLen = 7;
+    if (rxBuf[0] != (uint8_t)NETWORK_ID) return LORA_EVT_NONE;
+    uint8_t cs = 0;
+    for (uint8_t i = 0; i < len - 1; i++) cs ^= rxBuf[i];
+    if (cs != rxBuf[len - 1]) return LORA_EVT_NONE;
+
+    // --- RESTART ---
+    if (type == PKT_RESTART) {
+        // RESTART vine doar de la o unitate SINCRONIZATA (filtrul e la emisie);
+        // toate unitatile, inclusiv cele nesincronizate, dau reboot.
+        Serial.print("[LORA] RESTART primit de la unit "); Serial.println(rxBuf[2] & 0x0F);
+        return LORA_EVT_RESTART;
+    }
+
+    // --- MODE (select / change mode) ---
+    if (type == PKT_MODE) {
+        if (!isSynced) return LORA_EVT_NONE;   // OFFLINE ignora alertele de joc
+        uint8_t u = rxBuf[2] & 0x0F;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        uint8_t mode = rxBuf[3], team = rxBuf[4];
+        if (u >= 1 && u <= MAX_UNITS && u != UNIT_ID) {
+            if (unitTable[u - 1].mode != mode) {        // doar la SCHIMBARE reala de mod -> nu sterge o cucerire activa la copia dubla
+                unitTable[u - 1].mode       = mode;
+                unitTable[u - 1].status     = 0;        // fara actiune inca (neutral/idle)
+                unitTable[u - 1].team       = (Team)team;
+                unitTable[u - 1].actionTime = 0;
+            } else if (mode == 3) {
+                unitTable[u - 1].team       = (Team)team;   // respawn isi poate schimba echipa fara reset
             }
-
-            // Extindem rxLen pentru PKT_URGENT PAUSE (11 bytes) — dupa ce avem byte 5
-            if (rxCount == 6 && rxBuf[3] == PKT_URGENT) {
-                uint8_t teamIdByte = rxBuf[5] & 0x0F;
-                if (teamIdByte == 0x0F) rxLen = 11;
-            }
-
-            // Am primit pachetul complet?
-            if (rxCount >= 4 && rxCount == rxLen) {
-                processPacket(rxBuf, rxLen,
-                              liveScore, teamKills,
-                              isTimeOut, isGameTimerRunning,
-                              gameTimeLeftSeconds);
-                rxCount = 0;
-                rxLen   = 0;
-                break;
-            }
+            globalBattery[u - 1] = batt;
+            lastSeenTime[u - 1] = millis();
+            Serial.print("[LORA] MODE de la unit "); Serial.print(u);
+            Serial.print(" -> mode="); Serial.print(mode);
+            Serial.print(" team="); Serial.println(team);
         }
+        return LORA_EVT_NONE;
+    }
 
-        // Timeout receptie — daca nu soseste pachetul complet in 200ms, aruncam
-        if (rxCount > 0 && now - rxStart > 500) {
-            Serial.print("[LORA] RX Timeout dupa ");
-            Serial.print(rxCount);
-            Serial.print(" bytes. rxLen=");
-            Serial.print(rxLen);
-            Serial.print(" pktType=0x");
-            Serial.println(rxBuf[3], HEX);
-            rxCount = 0;
-            rxLen   = 0;
+    // --- TIME (start / pauza / resume / reset) ---
+    if (type >= PKT_TIME_START && type <= PKT_TIME_RESET) {
+        if (!isSynced) return LORA_EVT_NONE;   // OFFLINE ignora alertele de joc
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;   // nu reactionam la propria alerta
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) {
+            globalBattery[u - 1] = batt;
+            lastSeenTime[u - 1] = millis();
         }
-
-    // --------------------------------------------------------
-    // 2. MASINA DE STARI TRANSMISIE
-    // --------------------------------------------------------
-    switch (txState) {
-        case TX_IDLE:
-            break;
-
-        case TX_WAIT_AIR_FREE:
-            if (digitalRead(PIN_LORA_AUX) == LOW) {
-                loraPrintTiming(txPktType == PKT_SYNC ? "TX SYNC" : txPktType == PKT_HEARTBEAT ? "TX HEARTBEAT" : txPktType == PKT_URGENT ? "TX URGENT" : txPktType == PKT_START ? "TX START" : txPktType == PKT_CONQUEST ? "TX CONQUEST" : txPktType == PKT_RESTART ? "TX RESTART" : txPktType == PKT_EPOCH_SYNC ? "TX EPOCHSYNC" : "TX");
-                LoRaSerial.write(txBuf, txLen);
-                txState = TX_SENDING;
-                txStateStart = now;
-            } else if (now - txStateStart > txTimeout) {
-                Serial.println("[LORA] TX Timeout: aer blocat.");
-                txState = TX_IDLE;
-            }
-            break;
-
-        case TX_SENDING:
-            if (digitalRead(PIN_LORA_AUX) == HIGH) {
-                txState = TX_WAIT_DONE;
-                txStateStart = now;
-            } else if (now - txStateStart > 200) {
-                // Pachet mic — AUX poate sa nu urce vizibil
-                txState = TX_WAIT_DONE;
-                txStateStart = now;
-            }
-            break;
-
-        case TX_WAIT_DONE:
-            // Trailing Edge: AUX coboara = pachetul a ajuns la destinatari
-            if (digitalRead(PIN_LORA_AUX) == LOW) {
-                txState = TX_POST_ACTION;
-            } else if (now - txStateStart > 2000) {
-                Serial.println("[LORA] TX Timeout: wait done.");
-                txState = TX_POST_ACTION;
-            }
-            break;
-
-        case TX_POST_ACTION:
-            onTransmitDone(isTimeOut, isGameTimerRunning, gameTimeLeftSeconds);
-            txState = TX_IDLE;
-            break;
+        loraTimeAction = type - PKT_TIME_START;   // 0=start,1=pause,2=resume,3=reset
+        if (type == PKT_TIME_RESUME) loraResumeTime = ((uint16_t)rxBuf[3] << 8) | rxBuf[4];   // secunda la care reluam
+        Serial.print("[LORA] TIME primit, actiune="); Serial.println(loraTimeAction);
+        return LORA_EVT_TIME;
     }
 
-    // --------------------------------------------------------
-    // 3. JITTER PENDING
-    // --------------------------------------------------------
-    if (jitterPending && txState == TX_IDLE && now - jitterStart >= jitterDelay) {
-        if (jitterPktType == PKT_SYNC && !inSafeWindow()) {
-            jitterDelay = smartJitter(1100);
-            jitterStart = now;
-            return;
-        }
-
-        if (jitterPktType == PKT_URGENT && !inSafeWindow()) {
-            jitterDelay = smartJitter(500);
-            jitterStart = now;
-            return;
-        }
-
-        if (jitterPktType == PKT_START && !inSafeWindow()) {
-            jitterDelay = smartJitter(500);
-            jitterStart = now;
-            return;
-        }
-
-        if (jitterPktType == PKT_CONQUEST && !inSafeWindow()) {
-            jitterDelay = smartJitter(500);
-            jitterStart = now;
-            return;
-        }
-
-        if (jitterPktType == PKT_RESTART && !inSafeWindow()) {
-            jitterDelay = smartJitter(500);
-            jitterStart = now;
-            return;
-        }
-
-        jitterPending = false;
-        if (jitterPktType == PKT_SYNC)
-            buildSync();
-        else if (jitterPktType == PKT_URGENT) {
-            if (s_urgentEvent == EVT_GAME_PAUSED)
-                buildUrgentPause(s_gameTimeLeftForPause);
-            else
-                buildUrgent(s_urgentEvent, s_urgentTeam);
-        }
-        else if (jitterPktType == PKT_START)
-            buildStart(s_gameTimeLeft);
-        else if (jitterPktType == PKT_CONQUEST)
-            buildConquest(s_conquestWinner);
-        else if (jitterPktType == PKT_RESTART)
-            buildRestart();
-        startTransmit();
+    // --- CAPTURE sector ---
+    if (type == PKT_CAPTURE) {
+        if (!isSynced) return LORA_EVT_NONE;
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) { globalBattery[u-1] = batt; lastSeenTime[u-1] = millis(); }
+        loraEvtUnit = u;
+        loraEvtTeam = rxBuf[3];
+        Serial.print("[LORA] CAPTURE de la unit "); Serial.print(u); Serial.print(" team="); Serial.println(loraEvtTeam);
+        return LORA_EVT_CAPTURE;
     }
 
-    // --------------------------------------------------------
-    // 4. RETRANSMISIE
-    // --------------------------------------------------------
-    if (retxCount > 0 && retxCount <= retxMax && txState == TX_IDLE && now - retxStart >= retxDelay) {
-        startTransmit();  // txBuf inca valid
+    // --- NEUTRALIZE sector ---
+    if (type == PKT_NEUTRALIZE) {
+        if (!isSynced) return LORA_EVT_NONE;
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) { globalBattery[u-1] = batt; lastSeenTime[u-1] = millis(); }
+        loraEvtUnit = u;
+        loraEvtTeam = rxBuf[3];
+        loraEvtPoints = ((int32_t)rxBuf[4] << 8) | rxBuf[5];
+        Serial.print("[LORA] NEUTRALIZE de la unit "); Serial.print(u); Serial.print(" pts="); Serial.println(loraEvtPoints);
+        return LORA_EVT_NEUTRALIZE;
     }
 
-    // --------------------------------------------------------
-    // 5. CEAS TDMA
-    // --------------------------------------------------------
-    now = millis();  // ← refresh dupa ce onTransmitDone poate modifica lastEpochTick
-    if (!isNetworkSynced) return;
-    if (now - syncReceivedTime < 5000) return;
-
-    if (now - lastEpochTick >= 1000) {
-        syncEpochSeconds++;
-        if (syncEpochSeconds >= 60) {
-            syncEpochSeconds = 0;
-            hasTransmittedThisMinute = false;
-        }
-        lastEpochTick += 1000;
-
-        uint8_t myStart = (UNIT_ID - 1) * 5;
-
-        if (syncEpochSeconds == myStart && !hasTransmittedThisMinute) {
-            hasTransmittedThisMinute = true;
-
-            if (isMasterNode && epochSyncTimer > 0 &&
-                now - epochSyncTimer >= 1800000 &&
-                pendingEventType == EVT_NONE) {
-                buildEpochSync(gameTimeLeftSeconds);
-                } else {
-                    buildHeartbeat(liveScore, teamKills, appliedPenalties,
-                                   selectedMode, sectorOwner, isBombArmed,
-                                   respawnTeam, batteryPercent);
-                    if (epochSyncTimer == 0) epochSyncTimer = now;
-                }
-
-            if (txState == TX_IDLE) startTransmit();
-
-            if (isTimeOut && !finalHeartbeatSent) {
-                finalHeartbeatSent = true;
-            }
-        }
-    }
-}
-
-// ============================================================
-// API public
-// ============================================================
-void loraSendSync(uint8_t gsTimeLimit, uint8_t gsBonus, uint8_t gsWinCond, uint8_t bsTimerIdx, uint8_t bsCooldownIdx, uint8_t bsExpPtsIdx, uint8_t bsDefPtsIdx, uint8_t rsTimeIdx, uint8_t rsPenaltyIdx, uint8_t rsLimitIdx[4], bool isRunning, bool isOver, bool isPaused, uint8_t gsActionIdx, uint32_t gameTimeLeft, int32_t scores[4], uint16_t kills[4], int32_t penalties[4], uint32_t lastTimerTick) {
-
-    const char charset[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    for (int i = 0; i < 3; i++) currentSyncID[i] = charset[random(0, 62)];
-    currentSyncID[3] = '\0';
-    Serial.print("[LORA] Nou SyncID: ");
-    Serial.println(currentSyncID);
-
-    for (uint8_t i = 0; i < 4; i++) s_penalties[i] = penalties[i];
-
-    s_gsTimeLimit = gsTimeLimit;
-    s_gsBonus = gsBonus;
-    s_gsWinCond = gsWinCond;
-    s_bsTimerIdx = bsTimerIdx;
-    s_bsCooldownIdx = bsCooldownIdx;
-    s_bsExpPtsIdx = bsExpPtsIdx;
-    s_bsDefPtsIdx = bsDefPtsIdx;
-    s_rsTimeIdx = rsTimeIdx;
-    s_rsPenaltyIdx = rsPenaltyIdx;
-    for (uint8_t i = 0; i < 4; i++) s_rsLimitIdx[i] = rsLimitIdx[i];
-    s_isRunning = isRunning;
-    s_isTimeOut = isOver;
-    s_isPaused = isPaused;
-    s_gsActionIdx = gsActionIdx;
-    s_gameTimeLeft = gameTimeLeft;
-    s_lastTimerTick = lastTimerTick;
-    for (uint8_t i = 0; i < 4; i++) {
-        s_scores[i] = scores[i];
-        s_kills[i] = kills[i];
+    if (type == PKT_RESPAWN) {
+        if (!isSynced) return LORA_EVT_NONE;
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) { globalBattery[u-1] = batt; lastSeenTime[u-1] = millis(); }
+        loraEvtUnit = u;
+        loraEvtTeam = rxBuf[3];
+        loraEvtPoints = ((int32_t)rxBuf[4] << 8) | rxBuf[5];   // total curent kill-uri
+        Serial.print("[LORA] RESPAWN de la unit "); Serial.print(u); Serial.print(" totalKills="); Serial.println(loraEvtPoints);
+        return LORA_EVT_RESPAWN;
     }
 
-    if (!isNetworkSynced) {
-        buildSync();
-        startTransmit();
-    } else {
-        uint32_t now = millis();
-        uint32_t minJitter = (now < lastEpochTick) ? (lastEpochTick - now + 500) : 0;
-        jitterPktType = PKT_SYNC;
-        jitterStart = now;
-        jitterDelay = max(smartJitter(1100), minJitter);
-        jitterPending = true;
-        Serial.print("[LORA] Sync programat cu jitter: ");
-        Serial.println(jitterDelay);
-    }
-}
-
-void loraSendStart(uint32_t gameTimeLeftSeconds) {
-    s_gameTimeLeft = gameTimeLeftSeconds;
-    buildStart(gameTimeLeftSeconds);
-    if (!inSafeWindow() || txState != TX_IDLE) {
-        jitterPktType = PKT_START;
-        jitterDelay = smartJitter(500);
-        jitterStart = millis();
-        jitterPending = true;
-        return;
-    }
-    startTransmit();
-}
-
-void loraSendConquest(uint8_t winnerTeam) {
-    s_conquestWinner = winnerTeam;  // ← adaugam variabila statica
-    buildConquest(winnerTeam);
-    retxCount = 0;
-    retxMax = 1;
-    retxDelay = 200;
-    retxStart = 0;
-    if (!inSafeWindow() || txState != TX_IDLE) {
-        jitterPktType = PKT_CONQUEST;
-        jitterDelay = smartJitter(500);
-        jitterStart = millis();
-        jitterPending = true;
-        return;
-    }
-    startTransmit();
-}
-
-void loraSendRestart() {
-    buildRestart();
-    retxCount = 0;
-    retxMax = 1;
-    retxDelay = 200;
-    retxStart = 0;
-    if (!inSafeWindow() || txState != TX_IDLE) {
-        jitterPktType = PKT_RESTART;
-        jitterDelay = smartJitter(500);
-        jitterStart = millis();
-        jitterPending = true;
-        return;
-    }
-    startTransmit();
-}
-
-bool loraSendUrgent(uint8_t eventType, uint8_t teamId) {
-    pendingEventType = eventType;
-    pendingEventTeam = teamId;
-    s_urgentEvent = eventType;
-    s_urgentTeam = teamId;
-
-    if (!inSafeWindow() || txState != TX_IDLE) {
-        jitterPktType = PKT_URGENT;
-        jitterDelay = smartJitter(500);
-        jitterStart = millis();
-        jitterPending = true;
-        return false;
+    if (type == PKT_BOMB_PLANT || type == PKT_BOMB_DEFUSE) {
+        if (!isSynced) return LORA_EVT_NONE;
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) { globalBattery[u-1] = batt; lastSeenTime[u-1] = millis(); }
+        loraEvtUnit = u;
+        loraEvtTeam = rxBuf[3];
+        Serial.print("[LORA] BOMB "); Serial.print(type == PKT_BOMB_PLANT ? "PLANT" : "DEFUSE");
+        Serial.print(" de la unit "); Serial.println(u);
+        return (type == PKT_BOMB_PLANT) ? LORA_EVT_BOMB_PLANT : LORA_EVT_BOMB_DEFUSE;
     }
 
-    if (eventType == EVT_GAME_PAUSED) {
-        s_gameTimeLeftForPause = loraGameTimeForPause;
-        buildUrgentPause(s_gameTimeLeftForPause);
+    if (type == PKT_KILLRESET) {
+        if (!isSynced) return LORA_EVT_NONE;
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) { globalBattery[u-1] = batt; lastSeenTime[u-1] = millis(); }
+        loraEvtUnit = u;
+        loraEvtTeam = rxBuf[3];                                 // 0 = fara puncte, 1..4 = castigator
+        loraEvtPoints = ((int32_t)rxBuf[4] << 8) | rxBuf[5];    // puncte exacte
+        Serial.print("[LORA] KILLRESET de la unit "); Serial.print(u);
+        Serial.print(" winner="); Serial.print(loraEvtTeam); Serial.print(" pts="); Serial.println(loraEvtPoints);
+        return LORA_EVT_KILLRESET;
     }
-    else
-        buildUrgent(eventType, teamId);
-    startTransmit();
-    return true;
-}
 
-bool loraRestartPending() {
-    for (uint8_t i = 0; i < MAX_UNITS; i++) {
-        if (lastSeenTime[i] == 0xFFFFFFFF) return true;
+    if (type == PKT_HEARTBEAT) {
+        if (!isSynced) return LORA_EVT_NONE;
+        uint8_t u = rxBuf[2] & 0x0F;
+        if (u == UNIT_ID) return LORA_EVT_NONE;
+        uint8_t batt = (rxBuf[2] >> 4) & 0x07;
+        if (u >= 1 && u <= MAX_UNITS) { globalBattery[u-1] = batt; lastSeenTime[u-1] = millis(); }  // doar tinem unitatea "vie"
+        return LORA_EVT_NONE;   // fara handler in .ino (silentios, ca MODE)
     }
-    return false;
-}
 
-void loraSendRestartBlocking() {
-    buildRestart();
-    loraPrintTiming("TX RESTART BLOCKING");  // ← adauga asta
-    for (uint8_t r = 0; r < 2; r++) {
-        uint32_t t = millis();
-        while (digitalRead(PIN_LORA_AUX) == HIGH && millis() - t < 2000) {
-        }
-        if (digitalRead(PIN_LORA_AUX) == LOW) {
-            LoRaSerial.write(txBuf, txLen);
-            t = millis();
-            while (digitalRead(PIN_LORA_AUX) == LOW && millis() - t < 200) {
-            }
-            while (digitalRead(PIN_LORA_AUX) == HIGH) {
-            }
-        }
-    }
+    // --- SYNC ---
+    uint8_t  fromUnit = rxBuf[2];
+    uint32_t lt = ((uint32_t)rxBuf[3] << 16) | ((uint32_t)rxBuf[4] << 8) | rxBuf[5];
+
+    uint16_t bit = 0;
+    gsTimeLimit   = getBits(&rxBuf[6], bit, 4);
+    gsWinCond     = getBits(&rxBuf[6], bit, 2);
+    gsActionIdx   = getBits(&rxBuf[6], bit, 2);
+    gsBonus       = getBits(&rxBuf[6], bit, 3);
+    bsTimerIdx    = getBits(&rxBuf[6], bit, 3);
+    bsCooldownIdx = getBits(&rxBuf[6], bit, 3);
+    bsExpPtsIdx   = getBits(&rxBuf[6], bit, 4);
+    bsDefPtsIdx   = getBits(&rxBuf[6], bit, 4);
+    rsTimeIdx     = getBits(&rxBuf[6], bit, 4);
+    rsPenaltyIdx  = getBits(&rxBuf[6], bit, 3);
+    rsLimitIdx[0] = getBits(&rxBuf[6], bit, 4);
+    rsLimitIdx[1] = getBits(&rxBuf[6], bit, 4);
+    rsLimitIdx[2] = getBits(&rxBuf[6], bit, 4);
+    rsLimitIdx[3] = getBits(&rxBuf[6], bit, 4);
+
+    applySettingsFromIndices();
+    localTime       = lt;             // sincronizam ceasul 1:1
+    lastLocalTick   = now;            // numaram imediat de la valoarea primita
+    localTimePaused = false;
+    isSynced        = true;
+    syncedByUnit    = fromUnit;
+    if (fromUnit >= 1 && fromUnit <= MAX_UNITS) lastSeenTime[fromUnit - 1] = now;
+    Serial.print("[LORA] SYNC primit de la unit ");
+    Serial.print(", localTime="); Serial.println(lt);
+    return LORA_EVT_SYNC;
 }
