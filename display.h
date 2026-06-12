@@ -150,8 +150,15 @@ void drawBonusScreen(uint16_t points, uint8_t teamIndex);
 
 // Ecrane Sync (LoRa)
 void drawSyncWarningScreen();
+void drawModeWarningScreen();
+void drawExpImpMenu(uint8_t index);
+void drawExpImpWait();
+void drawExportWait();
+void drawExportDone(const char* l1, const char* l2);
+void drawImportWait();
 void drawSyncingScreen();
 void drawSyncedScreen(uint8_t fromUnitId);
 void drawSyncDoneScreen();
 void drawTimeAlertScreen(uint8_t action);
 void drawBlockedScreen();
+void drawRespawnDupScreen();

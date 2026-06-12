@@ -15,6 +15,8 @@ extern bool     localTimePaused;
 // isSynced == false => OFFLINE: nu transmite nicio alerta si ignora
 // alertele de joc primite (dar asculta pachetele SYNC ca sa poata fi adusa online).
 extern bool     isSynced;
+
+void applySettingsFromIndices();   // converteste indecsii de setari in valori (folosit la SYNC si IMPORT)
 extern uint8_t  syncedByUnit;   // ce unitate ne-a sincronizat ultima data
 
 // --- Indecsi setari (DEFINITI in .ino) — necesari pentru pachetul SYNC ---
@@ -24,12 +26,14 @@ extern uint8_t rsTimeIdx, rsPenaltyIdx;
 extern uint8_t rsLimitIdx[4];
 
 // Evenimente intoarse de loraPoll()
-enum LoraEvent : uint8_t { LORA_EVT_NONE = 0, LORA_EVT_SYNC = 1, LORA_EVT_RESTART = 2, LORA_EVT_TIME = 3, LORA_EVT_CAPTURE = 4, LORA_EVT_NEUTRALIZE = 5, LORA_EVT_RESPAWN = 6, LORA_EVT_BOMB_PLANT = 7, LORA_EVT_BOMB_DEFUSE = 8, LORA_EVT_KILLRESET = 9 };
+enum LoraEvent : uint8_t { LORA_EVT_NONE = 0, LORA_EVT_SYNC = 1, LORA_EVT_RESTART = 2, LORA_EVT_TIME = 3, LORA_EVT_CAPTURE = 4, LORA_EVT_NEUTRALIZE = 5, LORA_EVT_RESPAWN = 6, LORA_EVT_BOMB_PLANT = 7, LORA_EVT_BOMB_DEFUSE = 8, LORA_EVT_KILLRESET = 9, LORA_EVT_TIME_SYNC = 10 };
 extern uint8_t loraEvtUnit;     // unitatea sursa (1..12) pt CAPTURE/NEUTRALIZE
 extern uint8_t loraEvtTeam;     // echipa (1..4)
 extern int32_t loraEvtPoints;   // puncte exacte (NEUTRALIZE)
 extern uint8_t loraTimeAction;  // 0=start,1=pause,2=resume,3=reset (setat de loraPoll la LORA_EVT_TIME)
 extern uint16_t loraResumeTime;  // secunda primita in alerta de RESUME (setata de loraPoll)
+extern uint16_t loraTimeSyncSec; // secunda primita in TIME_SYNC (de la maestru)
+extern bool isTimeMaster;        // true pe unitatea care a trimis sync (autoritatea de timp)
 
 void loraInit();
 void loraTick();                                          // incrementeaza localTime la fiecare secunda
@@ -45,4 +49,8 @@ void loraSendBombDefuse(uint8_t team);                    // alerta dezamorsare 
 void loraSendKillReset(uint8_t winnerTeam, uint16_t pts); // alerta reset kill-uri (background)
 bool loraTxIdle();                                        // true cand coada TX e goala (AUX LOW dupa transmisie)
 void loraSendMode(uint8_t mode, uint8_t team);            // pune in coada alerta MODE (background)
+bool loraHeartbeatDue();                                  // true cand e timpul de heartbeat (apelata in loop)
+extern uint8_t sessionId;   // sesiune de retea (1 octet, 0 = fara sesiune / unitate proaspata)
+void loraSendHeartbeat(bool dup = true);                  // keep-alive simplu (dup=false -> o singura alerta)
+void loraSendTimeSync(uint16_t sec);                      // corectie de timp de la maestru (single send)
 LoraEvent loraPoll();                                     // citeste UART; intoarce evenimentul primit (deja aplicat)

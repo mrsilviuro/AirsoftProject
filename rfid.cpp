@@ -116,6 +116,91 @@ bool rfidBurnTag() {
 }
 
 // ============================================================
+// EXPORT/IMPORT stare joc — sectoarele 2..7 (blocuri de date, sarim trailerele).
+// Sectorul 1 (bloc 4) ramane identitatea de admin, neatins.
+// ============================================================
+static const uint8_t EXP_BLOCKS[] = {
+    8, 9, 10,  12, 13, 14,  16, 17, 18,  20, 21, 22,  24, 25, 26,  28, 29, 30,  32, 33, 34
+};
+static const uint8_t EXP_BLOCK_COUNT = sizeof(EXP_BLOCKS);   // 21 blocuri = 336 octeti
+
+RfidExportResult rfidExportState(const uint8_t* blob, uint16_t len) {
+    uint8_t uid[7] = {0};
+    uint8_t uidLength = 0;
+
+    if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50))
+        return EXPORT_NO_TAG;
+
+    // 1) Verificam ca e admin tag: bloc 4, cheia custom, magic + type==2
+    if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, RFID_BLOCK_ADDR, 0, customKey))
+        return EXPORT_NOT_ADMIN;
+    uint8_t buf[16];
+    if (!nfc.mifareclassic_ReadDataBlock(RFID_BLOCK_ADDR, buf))
+        return EXPORT_NOT_ADMIN;
+    if (buf[0] != RFID_MAGIC_BYTE || buf[1] != 2)
+        return EXPORT_NOT_ADMIN;
+
+    // 2) Scriem blob-ul in sectoarele 2..7
+    if ((uint16_t)EXP_BLOCK_COUNT * 16 < len) return EXPORT_WRITE_FAIL;   // nu incape
+    uint16_t off = 0;
+    int16_t lastSector = 1;   // sectorul 1 e deja autentificat
+    for (uint8_t bi = 0; bi < EXP_BLOCK_COUNT && off < len; bi++) {
+        uint8_t blk = EXP_BLOCKS[bi];
+        int16_t sector = blk / 4;
+        if (sector != lastSector) {
+            if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blk, 0, defaultKey))
+                return EXPORT_WRITE_FAIL;
+            lastSector = sector;
+        }
+        uint8_t b[16] = {0};
+        uint8_t n = (len - off >= 16) ? 16 : (uint8_t)(len - off);
+        memcpy(b, blob + off, n);
+        if (!nfc.mifareclassic_WriteDataBlock(blk, b))
+            return EXPORT_WRITE_FAIL;
+        off += 16;
+    }
+    return EXPORT_OK;
+}
+
+RfidImportResult rfidImportState(uint8_t* blob, uint16_t len) {
+    uint8_t uid[7] = {0};
+    uint8_t uidLength = 0;
+
+    if (!nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength, 50))
+        return IMPORT_NO_TAG;
+
+    // 1) Verificam ca e admin tag
+    if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, RFID_BLOCK_ADDR, 0, customKey))
+        return IMPORT_NOT_ADMIN;
+    uint8_t buf[16];
+    if (!nfc.mifareclassic_ReadDataBlock(RFID_BLOCK_ADDR, buf))
+        return IMPORT_NOT_ADMIN;
+    if (buf[0] != RFID_MAGIC_BYTE || buf[1] != 2)
+        return IMPORT_NOT_ADMIN;
+
+    // 2) Citim blob-ul din sectoarele 2..7
+    if ((uint16_t)EXP_BLOCK_COUNT * 16 < len) return IMPORT_READ_FAIL;
+    uint16_t off = 0;
+    int16_t lastSector = 1;
+    for (uint8_t bi = 0; bi < EXP_BLOCK_COUNT && off < len; bi++) {
+        uint8_t blk = EXP_BLOCKS[bi];
+        int16_t sector = blk / 4;
+        if (sector != lastSector) {
+            if (!nfc.mifareclassic_AuthenticateBlock(uid, uidLength, blk, 0, defaultKey))
+                return IMPORT_READ_FAIL;
+            lastSector = sector;
+        }
+        uint8_t b[16];
+        if (!nfc.mifareclassic_ReadDataBlock(blk, b))
+            return IMPORT_READ_FAIL;
+        uint8_t n = (len - off >= 16) ? 16 : (uint8_t)(len - off);
+        memcpy(blob + off, b, n);
+        off += 16;
+    }
+    return IMPORT_OK;
+}
+
+// ============================================================
 // rfidWriteTag()
 // ============================================================
 RfidWriteResult rfidWriteTag(uint8_t tagTypeToWrite, uint16_t points) {

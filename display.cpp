@@ -346,8 +346,9 @@ static void formatElapsed(uint32_t totalSec, char* buf, size_t bufLen) {
 
 // Mica baterie: corp 18x9 + terminal, cu 'bars' (0-4) bare pline
 static void drawBatteryIcon(uint8_t leftX, uint8_t y, uint8_t bars) {
-    display.drawRect(leftX, y, 18, 9, SSD1306_WHITE);
-    display.fillRect(leftX + 18, y + 2, 2, 5, SSD1306_WHITE);
+    display.drawRect(leftX, y, 19, 9, SSD1306_WHITE);              // corp cu 1px mai lung -> bara din dreapta nu mai e lipita de perete
+    display.fillRect(leftX + 19, y + 2, 2, 5, SSD1306_WHITE);      // borna pe dreapta
+    // bare ancorate la stanga (b=0) -> descarcare dreapta->stanga (prima dispare cea din dreapta)
     for (uint8_t b = 0; b < bars && b < 4; b++)
         display.fillRect(leftX + 2 + b * 4, y + 2, 3, 5, SSD1306_WHITE);
 }
@@ -735,7 +736,7 @@ void drawPages(const PageContext& ctx) {
                 Team t = ctx.globalUnitStatus[i];
                 bool everSeen = (ctx.lastSeenTime[i] > 0) || (i == UNIT_ID - 1);
                 if (!everSeen) continue;
-                bool offline = (ctx.lastSeenTime[i] > 0) && (now - ctx.lastSeenTime[i] > 1800000);
+                bool offline = (ctx.lastSeenTime[i] > 0) && ((ctx.isGamePaused ? ctx.pauseStartTime : now) - ctx.lastSeenTime[i] > 1800000);
                 rows[count].id = i;
                 rows[count].sortMode = (m == 0) ? 4 : m;
                 // Calcul timp pentru afisare
@@ -743,7 +744,8 @@ void drawPages(const PageContext& ctx) {
                 bool hasTime = false;
                 if (ctx.globalEventTime[i] > 0) {
                     uint32_t refNow = ctx.isGamePaused ? ctx.pauseStartTime : (ctx.isTimeOut ? ctx.gameOverTime : now);
-                    uint32_t el = (refNow > ctx.globalEventTime[i]) ? (refNow - ctx.globalEventTime[i]) / 1000 : 0;
+                    int32_t  elDiff = (int32_t)(refNow - ctx.globalEventTime[i]);   // wraparound-safe (timp 'subcurs' dupa import)
+                    uint32_t el = (elDiff > 0) ? ((uint32_t)elDiff) / 1000 : 0;
                     uint32_t tgt = 0;
                     bool active = true;
                     if (m == 1 && t != TEAM_NEUTRAL) {
@@ -846,6 +848,7 @@ void drawPages(const PageContext& ctx) {
         // ====================================================
         case 4: {
             uint32_t now = millis();
+            uint32_t refNow = ctx.isGamePaused ? ctx.pauseStartTime : now;   // pe pauza, timpul ultimei alerte ingheata
             bool showBattery = ((now / 3000) % 2 == 0);
             uint8_t activeUnits[MAX_UNITS];
             uint8_t count = 0;
@@ -872,20 +875,20 @@ void drawPages(const PageContext& ctx) {
                         display.print("- ");
                     }
                     display.print(UNIT_NAMES[uid]);
-                    bool offline = (ctx.lastSeenTime[uid] > 0) && (now - ctx.lastSeenTime[uid] > 1800000);
+                    bool offline = (ctx.lastSeenTime[uid] > 0) && (refNow - ctx.lastSeenTime[uid] > 1800000);
                     if (offline) {
                         const char* off = "OFFLINE";
                         uint8_t tw = strlen(off) * 6;
                         display.setCursor(SCREEN_WIDTH - tw - rightMargin, y);
                         display.print(off);
                     } else if (showBattery) {
-                        drawBatteryIcon(SCREEN_WIDTH - 20 - rightMargin, y, ctx.globalBattery[uid]);
+                        drawBatteryIcon(SCREEN_WIDTH - 21 - rightMargin, y, ctx.globalBattery[uid]);
                     } else {
                         char syncText[20];
                         if (ctx.lastSeenTime[uid] == 0) {
                             strcpy(syncText, "--");
                         } else {
-                            uint32_t el = (now - ctx.lastSeenTime[uid]) / 1000;
+                            uint32_t el = (refNow - ctx.lastSeenTime[uid]) / 1000;
                             formatElapsed(el, syncText, sizeof(syncText));
                         }
                         uint8_t tw = strlen(syncText) * 6;
@@ -983,14 +986,14 @@ void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) 
     display.print("Admin Mode");
     display.drawLine(0, 10, SCREEN_WIDTH, 10, SSD1306_WHITE);
 
-    const char* const items[8] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart", "Power Off"};
+    const char* const items[9] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Imp. / Exp. Data", "Change Mode", "System Restart", "Power Off"};
 
     uint8_t shown = 0;
-    for (uint8_t i = scrollIndex; i < 8; i++) {
+    for (uint8_t i = scrollIndex; i < 9; i++) {
         if (shown >= 5) break;
 
-        // Ascundem Change Mode (index 5) daca nu avem mod selectat
-        if (i == 5 && selectedMode == -1) continue;
+        // Ascundem Change Mode (index 6) daca nu avem mod selectat
+        if (i == 6 && selectedMode == -1) continue;
 
         display.setCursor(0, 14 + (shown * 10));
 
@@ -1005,14 +1008,91 @@ void drawAdminMenu(uint8_t menuIndex, uint8_t scrollIndex, int8_t selectedMode) 
         shown++;
     }
 
-    uint8_t total = (selectedMode == -1) ? 7 : 8;
+    uint8_t total = (selectedMode == -1) ? 8 : 9;
     drawScrollbar(total, 5, scrollIndex, 13, 51);
     display.display();
 }
+
+void drawExpImpMenu(uint8_t index) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    uint8_t x;
+    // Titlu + linie (ca pe celelalte sub-pagini)
+    const char* title = "Imp. / Exp. Data";
+    x = (SCREEN_WIDTH - strlen(title) * 6) / 2;
+    display.setCursor(x, 0); display.print(title);
+    display.drawLine(0, 10, SCREEN_WIDTH, 10, SSD1306_WHITE);
+    // "Please select an option:" pe doua randuri
+    const char* h1 = "Please select";
+    x = (SCREEN_WIDTH - strlen(h1) * 6) / 2;
+    display.setCursor(x, 15); display.print(h1);
+    const char* h2 = "an option:";
+    x = (SCREEN_WIDTH - strlen(h2) * 6) / 2;
+    display.setCursor(x, 25); display.print(h2);
+    // Optiuni dupa un mic spatiu (fara linie)
+    const char* const items[2] = {"Export Data", "Import Data"};
+    for (uint8_t i = 0; i < 2; i++) {
+        uint8_t y = 41 + i * 11;
+        display.setCursor(0, y);
+        if (i == index) {
+            display.drawBitmap(0, y, ARROW_RIGHT, 5, 7, SSD1306_WHITE);
+            display.setCursor(12, y);
+        } else {
+            display.print("  ");
+        }
+        display.print(items[i]);
+    }
+    display.display();
+}
+
+void drawExpImpWait() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "Please Wait ...";
+    uint8_t x = (SCREEN_WIDTH - strlen(l1) * 6) / 2;
+    display.setCursor(x, 28);
+    display.print(l1);
+    display.display();
+}
+
+void drawExportWait() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "Place admin card";
+    uint8_t x = (SCREEN_WIDTH - strlen(l1) * 6) / 2;
+    display.setCursor(x, 20); display.print(l1);
+    const char* l2 = "to export ...";
+    x = (SCREEN_WIDTH - strlen(l2) * 6) / 2;
+    display.setCursor(x, 32); display.print(l2);
+    display.display();
+}
+
+void drawExportDone(const char* l1, const char* l2) {
+    display.clearDisplay();
+    display.setTextSize(1);
+    uint8_t x = (SCREEN_WIDTH - strlen(l1) * 6) / 2;
+    display.setCursor(x, 24); display.print(l1);
+    x = (SCREEN_WIDTH - strlen(l2) * 6) / 2;
+    display.setCursor(x, 36); display.print(l2);
+    display.display();
+}
+
+void drawImportWait() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "Place admin card";
+    uint8_t x = (SCREEN_WIDTH - strlen(l1) * 6) / 2;
+    display.setCursor(x, 20); display.print(l1);
+    const char* l2 = "to import ...";
+    x = (SCREEN_WIDTH - strlen(l2) * 6) / 2;
+    display.setCursor(x, 32); display.print(l2);
+    display.display();
+}
+
 void drawAdminPages(const AdminContext& ac) {
     display.clearDisplay();
     display.setTextSize(1);
-    const char* const items[8] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Change Mode", "System Restart", "Power Off"};
+    const char* const items[9] = {"Game Settings", "Bomb Parameters", "Respawn Rules", "Sync Units", "TAG Writer", "Imp. / Exp. Data", "Change Mode", "System Restart", "Power Off"};
     if (ac.selectedPage == 0) {
         // --- GAME SETTINGS ---
         const char* const wcT[] = {"By Points", "By Conquest", "By Any"};

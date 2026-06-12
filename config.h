@@ -60,6 +60,7 @@ const uint8_t PIN_BTNS[4] = { 13, 14, 26, 27 };
 #define PKT_BOMB_DEFUSE 0x0C
 #define PKT_KILLRESET   0x0D
 #define PKT_HEARTBEAT   0x0E
+#define PKT_TIME_SYNC   0x0F
 
 // ============================================================
 // DISPLAY OLED (2.42" SSD1309 condus de libraria SSD1306)
@@ -84,6 +85,8 @@ const uint8_t PIN_BTNS[4] = { 13, 14, 26, 27 };
   { 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6 }
 #define RFID_MAGIC_BYTE 0x4E
 #define RFID_BLOCK_ADDR 4
+#define STATE_BLOB_VERSION 0x04   // versiune format export/import card
+#define STATE_BLOB_LEN     297     // lungimea blob-ului serializat
 
 // ============================================================
 // ECHIPE & UNITATI
@@ -98,7 +101,7 @@ enum Team : uint8_t {
 };
 
 const char* const TEAM_NAMES[4] = {
-  "Phantom", "Sentinel", "Falcon", "Nemesis"
+  "Phantoms", "Sentinels", "Falcons", "Nemesis"
 };
 
 const char* const UNIT_NAMES[MAX_UNITS] = {
@@ -123,6 +126,12 @@ enum GameState : uint8_t {
   STATE_ADMIN_MENU,
   STATE_ADMIN_PAGES,
   STATE_ADMIN_SAVED,
+  STATE_EXPIMP_MENU,
+  STATE_EXPIMP_WAIT,
+  STATE_EXPORT_WAIT,
+  STATE_EXPORT_DONE,
+  STATE_IMPORT_WAIT,
+  STATE_IMPORT_DONE,
   STATE_ADMIN_TAG_WRITE,
   STATE_WAIT_ADMIN_TAG,
   STATE_LOADING,
@@ -132,12 +141,14 @@ enum GameState : uint8_t {
   STATE_KILL_RESET_WINNER,
   STATE_KILL_RESET_DONE,
   STATE_TIME_RESET_ADMIN,
+  STATE_MODE_WARNING,
   STATE_SYNC_WARNING,
   STATE_SYNCING,
   STATE_SYNCED,
   STATE_SYNC_DONE,
   STATE_TIME_ALERT,
   STATE_ADMIN_BLOCKED,
+  STATE_RESPAWN_DUP,
   STATE_POWER_OFF
 };
 

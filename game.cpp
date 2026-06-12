@@ -183,6 +183,28 @@ void drawSyncWarningScreen() {
     display.display();
 }
 
+void drawModeWarningScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    uint8_t x;
+    const char* l1 = "--- WARNING ---";
+    x = (SCREEN_WIDTH - (strlen(l1) * 6)) / 2;
+    display.setCursor(x, 0); display.print(l1);
+    const char* l2 = "This unit is not";
+    x = (SCREEN_WIDTH - (strlen(l2) * 6)) / 2;
+    display.setCursor(x, 16); display.print(l2);
+    const char* l3 = "synchronized.";
+    x = (SCREEN_WIDTH - (strlen(l3) * 6)) / 2;
+    display.setCursor(x, 26); display.print(l3);
+    const char* l4 = "Continue?";
+    x = (SCREEN_WIDTH - (strlen(l4) * 6)) / 2;
+    display.setCursor(x, 40); display.print(l4);
+    const char* l5 = "RED: Back   BLUE: Yes";
+    x = (SCREEN_WIDTH - (strlen(l5) * 6)) / 2;
+    display.setCursor(x, 56); display.print(l5);
+    display.display();
+}
+
 void drawSyncingScreen() {
     display.clearDisplay();
     display.setTextSize(2);
@@ -258,10 +280,23 @@ void drawBlockedScreen() {
     const char* l1 = "Can't do that";
     const char* l2 = "while playing ...";
     uint8_t x = (SCREEN_WIDTH - strlen(l1) * 6) / 2;
-    display.setCursor(x, 26);
+    display.setCursor(x, 24);
     display.print(l1);
     x = (SCREEN_WIDTH - strlen(l2) * 6) / 2;
-    display.setCursor(x, 38);
+    display.setCursor(x, 36);
     display.print(l2);
+    display.display();
+}
+
+void drawRespawnDupScreen() {
+    display.clearDisplay();
+    display.setTextSize(1);
+    const char* l1 = "One team can't";
+    const char* l2 = "have two respawn";
+    const char* l3 = "units!";
+    uint8_t x;
+    x = (SCREEN_WIDTH - strlen(l1) * 6) / 2; display.setCursor(x, 16); display.print(l1);
+    x = (SCREEN_WIDTH - strlen(l2) * 6) / 2; display.setCursor(x, 28); display.print(l2);
+    x = (SCREEN_WIDTH - strlen(l3) * 6) / 2; display.setCursor(x, 40); display.print(l3);
     display.display();
 }
